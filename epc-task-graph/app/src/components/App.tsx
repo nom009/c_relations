@@ -46,7 +46,9 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && key === "z") {
         e.preventDefault();
         e.stopImmediatePropagation();
-        e.shiftKey ? useApp.getState().redo() : useApp.getState().undo();
+        const s = useApp.getState();
+        if (e.shiftKey) s.redo();
+        else s.undo();
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;

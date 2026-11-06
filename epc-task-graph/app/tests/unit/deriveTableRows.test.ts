@@ -224,7 +224,6 @@ describe('deriveTableRows: 性能（§12.6 受入(a) 4,000で <30ms 目標）', 
     }
     times.sort((a, b) => a - b);
     const median = times[Math.floor(times.length / 2)];
-    // eslint-disable-next-line no-console
     console.log(`[deriveTableRows perf] rows=${rowsN} median=${median.toFixed(2)}ms`);
     expect(rowsN).toBeGreaterThan(4000); // タスク4,000＋WBS行
     expect(median).toBeLessThan(60); // 余裕を持った上限（目標<30ms・CI環境差を吸収）

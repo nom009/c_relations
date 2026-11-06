@@ -24,11 +24,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: epc-task-graph/app/package-lock.json
       - name: Install deps
         run: npm ci
+      - name: Lint
+        run: npm run lint
       - name: Run unit tests
         run: npm test -- --no-file-parallelism
       - name: Build (base = /c_relations/)
