@@ -6,43 +6,29 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useApp, ALL_TABLE_COLUMNS } from '../../store/store';
-import { selectTableRows } from '../../store/selectors';
-import { useCpm } from '../../store/useCpm';
+import { useAssigneeOptions, useCpm, useTableRows } from '../../store/hooks';
 import type { TableColumnKey, TableRow, Task } from '../../domain';
 import { COLUMN_META, ROW_HEIGHT } from './cells';
 import { TableRowView, type RowHandlers } from './TableRowView';
 import { ColumnMenu } from './ColumnMenu';
 import { BulkBar } from './BulkBar';
+import { isShortcutBlocked } from '../keyboard';
 
 export function TableView({ active }: { active: boolean }) {
-  const tasks = useApp((s) => s.tasks);
-  const dependencies = useApp((s) => s.dependencies);
-  const viewSpec = useApp((s) => s.viewSpec);
-  const cpHighlight = useApp((s) => s.cpHighlight);
   const tableSort = useApp((s) => s.tableSort);
   const tableColumns = useApp((s) => s.tableColumns);
   const selection = useApp((s) => s.selection);
   const selectedIds = useApp((s) => s.selectedIds);
 
   const cpm = useCpm();
-  const augSpec = useMemo(
-    () => ({ ...viewSpec, criticalTasks: cpm.criticalTasks, criticalEdges: cpm.criticalEdges, cpHighlight }),
-    [viewSpec, cpm, cpHighlight],
-  );
-  const { rows, stats } = useMemo(
-    () => selectTableRows(tasks, dependencies, augSpec, tableSort, cpm.byTask),
-    [tasks, dependencies, augSpec, tableSort, cpm],
-  );
+  const { rows, stats } = useTableRows();
 
   const columns = useMemo(
     () => ALL_TABLE_COLUMNS.filter((k) => tableColumns.includes(k)),
     [tableColumns],
   );
   const totalWidth = useMemo(() => columns.reduce((w, c) => w + COLUMN_META[c].width, 0), [columns]);
-  const assigneeOptions = useMemo(
-    () => [...new Set(tasks.map((t) => t.assignee).filter(Boolean))].sort(),
-    [tasks],
-  );
+  const assigneeOptions = useAssigneeOptions();
 
   // 編集中セル（ローカル・§12.1「読み方」の状態）。書込は必ずストアアクション経由。
   const editRef = useRef<{ id: string; col: TableColumnKey } | null>(null);
@@ -172,9 +158,7 @@ export function TableView({ active }: { active: boolean }) {
     const onKey = (e: KeyboardEvent) => {
       const s = useApp.getState();
       if (s.activeView !== 'table') return;
-      const el = e.target as HTMLElement;
-      const tag = (el.tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable) return;
+      if (isShortcutBlocked(e)) return;
       if (e.metaKey || e.ctrlKey) return; // Undo/Redo 等はグラフ側グローバルに任せる
       const list = rowsRef.current;
       const curId = s.selection.taskId || s.selection.aggId || null;

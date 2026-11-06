@@ -75,6 +75,32 @@ export function defaultCalendar(): Calendar {
   return { id: 'cal-default', name: '週休2日', workingDays: [1, 2, 3, 4, 5], holidays: [] };
 }
 
+// 全 ID（プロジェクト/タスク/依存）を振り直した複製を返す。tasks/dependencies の主キーは
+// プロジェクト横断で一意のため、複製・インポート時は必ずこれを通して他プロジェクトとの衝突を避ける。
+export function cloneDocWithNewIds(src: GraphDoc, newName: string): GraphDoc {
+  const now = nowISO();
+  const idMap = new Map<string, string>();
+  const tasks = src.tasks.map((t) => {
+    const nid = newId();
+    idMap.set(t.id, nid);
+    return { ...t, id: nid };
+  });
+  const dependencies = src.dependencies
+    .map((d) => ({
+      ...d,
+      id: newId(),
+      predecessorId: idMap.get(d.predecessorId)!,
+      successorId: idMap.get(d.successorId)!,
+    }))
+    .filter((d) => d.predecessorId && d.successorId);
+  return {
+    ...src,
+    project: { ...src.project, id: newId(), name: newName, createdAt: now, updatedAt: now, version: 1 },
+    tasks,
+    dependencies,
+  };
+}
+
 export function emptyDoc(name = '新規プロジェクト'): GraphDoc {
   const ts = nowISO();
   return {
@@ -84,7 +110,8 @@ export function emptyDoc(name = '新規プロジェクト'): GraphDoc {
       name,
       description: '',
       calendarId: 'cal-default',
-      dataDate: ts.slice(0, 10),
+      // 開始基準日は利用者の現地日付（UTC だと JST 午前9時前に前日になる）。
+      dataDate: new Date().toLocaleDateString('sv-SE'),
       createdAt: ts,
       updatedAt: ts,
       version: 1,

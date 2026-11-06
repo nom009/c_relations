@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toMspdi, fromMspdi, makeTask, makeDep, emptyDoc, type GraphDoc } from '../../src/domain';
+import { toMspdi, fromMspdi, makeTask, makeDep, emptyDoc, computeCpm, type GraphDoc } from '../../src/domain';
 
 function docWith(tasks: ReturnType<typeof makeTask>[], deps: ReturnType<typeof makeDep>[]): GraphDoc {
   const d = emptyDoc('T');
@@ -51,6 +51,32 @@ describe('MSPDI 往復（§8 / Phase5 下ごしらえ）', () => {
     expect(r.tasks.length).toBe(1);
     expect(r.tasks[0].name).toBe('実作業');
     expect(r.tasks[0].durationDays).toBe(2); // 16h / 8 = 2日
+  });
+
+  it('Start/Finish: Finish は最終作業日（CPM の排他的 EF の前日）、マイルストーンは Start と同日', () => {
+    const cpm = computeCpm(doc.tasks, doc.dependencies, '2026-01-05', null);
+    const xml = toMspdi(doc, cpm);
+    const block = (uid: number) => new RegExp(`<UID>${uid}</UID>[\\s\\S]*?</Task>`).exec(xml)![0];
+    // A: 4日 → 1/5〜1/8 の最終作業日は 1/8
+    expect(block(1)).toContain('<Start>2026-01-05T08:00:00</Start>');
+    expect(block(1)).toContain('<Finish>2026-01-08T17:00:00</Finish>');
+    // 着工(マイルストーン): Start と同日
+    const m = block(3);
+    expect(m.match(/<Start>(\d{4}-\d{2}-\d{2})/)![1]).toBe(m.match(/<Finish>(\d{4}-\d{2}-\d{2})/)![1]);
+  });
+
+  it('属性付きタグ・CDATA・数値文字参照・同一ペアの重複リンクを取り込める', () => {
+    const xml = `<Project><Tasks>
+      <Task xmlns="x"><UID>1</UID><Name><![CDATA[A & B]]></Name><Duration>PT8H0M0S</Duration></Task>
+      <Task><UID>2</UID><Name>&#x30C6;&#12473;&#12488;</Name><Duration>PT8H0M0S</Duration>
+        <PredecessorLink><PredecessorUID>1</PredecessorUID><Type>1</Type></PredecessorLink>
+        <PredecessorLink><PredecessorUID>1</PredecessorUID><Type>3</Type></PredecessorLink>
+      </Task>
+    </Tasks></Project>`;
+    const r = fromMspdi(xml);
+    expect(r.tasks.map((t) => t.name)).toEqual(['A & B', 'テスト']);
+    expect(r.dependencies.length).toBe(1);
+    expect(r.dependencies[0].type).toBe('FS');
   });
 
   it('XMLエスケープ: 名前の & < > が往復で壊れない', () => {

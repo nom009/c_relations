@@ -29,6 +29,8 @@ jobs:
           cache-dependency-path: epc-task-graph/app/package-lock.json
       - name: Install deps
         run: npm ci
+      - name: Run unit tests
+        run: npm test -- --no-file-parallelism
       - name: Build (base = /c_relations/)
         run: npm run build -- --base=/c_relations/
       - uses: actions/configure-pages@v5

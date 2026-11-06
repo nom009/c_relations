@@ -142,6 +142,22 @@ describe('CPM 依存タイプ＋lag（Phase 2 手計算フィクスチャ）', (
     expect(res.projectEnd).toBe(6);
     expect(res.byTask.get('B')!.esDate).toBe(addCalendarDays(START, 3));
   });
+
+  it('SS で後続が先に終わっても、終了日を決める先行はクリティカル（LF は projectEnd で頭打ち）', () => {
+    const res = computeCpm([T('A', 10), T('B', 2)], [Dt('A', 'B', 'SS', 0)], START);
+    checkTask(res, 'A', { es: 0, ef: 10, ls: 0, lf: 10, tf: 0, crit: true });
+    checkTask(res, 'B', { es: 0, ef: 2, ls: 8, lf: 10, tf: 8, crit: false });
+  });
+
+  it('FF+lag を週休カレンダーで使っても余裕日数が負にならない', () => {
+    const MON = '2026-01-05';
+    const res = computeCpm([T('A', 5), T('B', 2)], [Dt('A', 'B', 'FF', 1)], MON, {
+      workingDays: [1, 2, 3, 4, 5],
+      holidays: [],
+    });
+    checkTask(res, 'A', { es: 0, ef: 5, ls: 0, lf: 5, tf: 0, crit: true });
+    expect(res.byTask.get('B')!.totalFloat).toBe(0);
+  });
 });
 
 describe('CPM 日付制約 SNET/FNLT/ASAP（Phase 2 手計算フィクスチャ）', () => {
@@ -208,6 +224,20 @@ describe('CPM 稼働カレンダー（Phase 2・週休/祝日を跨ぐと暦日�
     const A = T('A', 3);
     const res = computeCpm([A], [], MON, { workingDays: [0, 1, 2, 3, 4, 5, 6], holidays: [] });
     checkTask(res, 'A', { es: 0, ef: 3, ls: 0, lf: 3, tf: 0, crit: true });
+  });
+
+  it('金曜終了→月曜開始の FS 依存は、週末を跨いでも駆動依存（クリティカルエッジ）になる', () => {
+    const A = T('A', 5); // 月(0)→金終了=土(5)
+    const B = T('B', 1);
+    const res = computeCpm([A, B], [D('A', 'B')], MON, MONFRI);
+    expect(res.byTask.get('B')!.es).toBe(7); // 土日を跨いで翌月曜
+    expect([...res.criticalEdges]).toEqual(['A->B']);
+  });
+
+  it('稼働曜日が空や範囲外でも暴走せず有限時間で終わる', () => {
+    const A = T('A', 100000);
+    const res = computeCpm([A], [], MON, { workingDays: [], holidays: [] });
+    expect(Number.isFinite(res.projectEnd)).toBe(true);
   });
 });
 

@@ -12,8 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { addCalendarDays, DISC_COLOR, type TableRow } from '../../domain';
 import { useApp } from '../../store/store';
-import { selectTableRows } from '../../store/selectors';
-import { useCpm } from '../../store/useCpm';
+import { useCpm, useTableRows } from '../../store/hooks';
 import { ROW_HEIGHT } from '../table/cells';
 
 const LEFT_W = 260; // 名前ペイン幅
@@ -28,6 +27,7 @@ function dayOffset(dateStr: string, base: string): number {
 function monthTicks(dataDate: string, fromOff: number, toOff: number): { off: number; label: string }[] {
   const ticks: { off: number; label: string }[] = [];
   const start = new Date(dataDate + 'T00:00:00Z');
+  if (Number.isNaN(start.getTime()) || !Number.isFinite(fromOff)) return ticks;
   start.setUTCDate(start.getUTCDate() + fromOff);
   const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
   for (let i = 0; i < 2400; i++) {
@@ -41,26 +41,15 @@ function monthTicks(dataDate: string, fromOff: number, toOff: number): { off: nu
 }
 
 export function GanttView({ active }: { active: boolean }) {
-  const tasks = useApp((s) => s.tasks);
   const dependencies = useApp((s) => s.dependencies);
-  const viewSpec = useApp((s) => s.viewSpec);
   const dataDate = useApp((s) => s.project.dataDate);
-  const cpHighlight = useApp((s) => s.cpHighlight);
-  const tableSort = useApp((s) => s.tableSort);
   const selection = useApp((s) => s.selection);
   const [manualDayWidth, setManualDayWidth] = useState<number | null>(null); // null=自動フィット
   const [showDeps, setShowDeps] = useState(true); // 依存矢印の表示トグル
   const [paneW, setPaneW] = useState(800); // 右ペイン幅（自動フィット計算用）
 
   const cpm = useCpm();
-  const augSpec = useMemo(
-    () => ({ ...viewSpec, criticalTasks: cpm.criticalTasks, criticalEdges: cpm.criticalEdges, cpHighlight }),
-    [viewSpec, cpm, cpHighlight],
-  );
-  const { rows } = useMemo(
-    () => selectTableRows(tasks, dependencies, augSpec, tableSort, cpm.byTask),
-    [tasks, dependencies, augSpec, tableSort, cpm],
-  );
+  const { rows } = useTableRows();
 
   // 時間ドメインは「表示中の行」の日付範囲に絞る（全体15,000日でなく、見えているタスクの期間へズーム）。
   const range = useMemo(() => {

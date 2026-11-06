@@ -142,6 +142,15 @@ describe('deriveVisibleGraph: 関係ハイライト（focus mode=highlight・§2
     expect(b.gen).toBe(-1);
   });
 
+  it('highlight では continuation 集約を作らない（非近傍は実ノードで描かれるため）', () => {
+    const res = deriveVisibleGraph(
+      tasks,
+      deps,
+      spec({ focus: { taskId: near[2].id, up: 1, down: 1, mode: 'highlight' } }),
+    );
+    expect(res.visibleNodes.some((n) => n.kind === 'aggregate' && n.continuation)).toBe(false);
+  });
+
   it('isolate（既定）は非近傍を除去する', () => {
     const res = deriveVisibleGraph(
       tasks,

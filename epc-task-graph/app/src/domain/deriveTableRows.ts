@@ -15,9 +15,8 @@ import type {
   ViewSpec,
 } from './types';
 import type { CpmTaskResult } from './cpm';
-import { buildAdjacency, expandBoundary, neighborhood } from './graph';
-import { isFilterActive, matchesFilter } from './filter';
-import { buildWbsTree, isWbsPrefix, naturalWbsCompare, type WbsTreeNode } from './wbs';
+import { classify, resolveVisibility } from './visibility';
+import { buildWbsTree, naturalWbsCompare, type WbsTreeNode } from './wbs';
 
 // 候補タスク（段1-2の結果）: 描画対象に残るタスク＋その表示フラグ。
 interface Cand {
@@ -72,74 +71,19 @@ export function deriveTableRows(
   sort: TableSort[] | null | undefined,
   cpmByTask: Map<string, CpmTaskResult> | null | undefined,
 ): TableResult {
-  const filter = (viewSpec && viewSpec.filter) || {};
-  const displayMode = (viewSpec && viewSpec.displayMode) || 'DIM';
-  const collapsedWbs = (viewSpec && viewSpec.collapsedWbs) || [];
-  const focus = (viewSpec && viewSpec.focus) || null;
-  const me = (viewSpec && viewSpec.me) || '';
-  const boundaryUp = (viewSpec && viewSpec.boundaryUp) || 0;
-  const boundaryDown = (viewSpec && viewSpec.boundaryDown) || 0;
-  const criticalTasks = (viewSpec && viewSpec.criticalTasks) || null;
   const sortSpec = sort && sort.length ? sort : [];
 
-  const taskById = new Map<string, Task>();
-  for (const t of tasks) taskById.set(t.id, t);
-  const { succ, pred } = buildAdjacency(deps);
+  // ---- 段1-2: フィルタ判定・近傍フォーカス・実効折り畳み（グラフと共通の規則・visibility.ts）----
+  // テーブルは関係ハイライトでも近傍だけを行にする（全行を残すと淡色行が埋もれるため）。
+  const v = resolveVisibility(tasks, deps, viewSpec);
+  const { succ, pred, active, matchSet, criticalTasks } = v;
+  const collapsedSet = v.collapsed;
 
-  // ---- 段1: フィルタ判定（matchesFilter 再利用・§2.8）----
-  const active = isFilterActive(filter);
-  const matchSet = new Set<string>();
-  if (active) for (const t of tasks) if (matchesFilter(t, filter, me, criticalTasks)) matchSet.add(t.id);
-
-  // ---- 段2: 近傍フォーカス（neighborhood 再利用・§2.9）----
-  let nb: ReturnType<typeof neighborhood> | null = null;
-  if (focus && focus.taskId && taskById.has(focus.taskId)) {
-    nb = neighborhood(
-      focus.taskId,
-      succ,
-      pred,
-      focus.up != null ? focus.up : 2,
-      focus.down != null ? focus.down : 2,
-    );
-  }
-  const isoRemove = active && displayMode === 'ISOLATE' && !nb;
-
-  // 「担当＋前後」ビュー: 一致集合から前後の受け渡し先を文脈として含める（graph と同じ規則）。
-  const boundarySet =
-    active && !nb && (boundaryUp > 0 || boundaryDown > 0)
-      ? expandBoundary(matchSet, succ, pred, boundaryUp, boundaryDown)
-      : null;
-
-  // 候補集合（deriveVisibleGraph 段1-2 と同じ規則）。
   const cands: Cand[] = [];
   for (const t of tasks) {
-    if (nb) {
-      if (!nb.set.has(t.id)) continue;
-      cands.push({ task: t, dim: false, outside: active && !matchSet.has(t.id) });
-    } else if (isoRemove) {
-      const isMatch = matchSet.has(t.id);
-      const isBoundary = !!boundarySet && boundarySet.has(t.id);
-      if (!isMatch && !isBoundary) continue;
-      cands.push({ task: t, dim: false, outside: !isMatch });
-    } else {
-      const isMatch = !active || matchSet.has(t.id);
-      const isBoundary = !!boundarySet && boundarySet.has(t.id);
-      cands.push({
-        task: t,
-        dim: active && displayMode === 'DIM' && !isMatch && !isBoundary,
-        outside: active && !isMatch && isBoundary,
-      });
-    }
+    const flags = classify(v, t.id);
+    if (flags) cands.push({ task: t, ...flags });
   }
-
-  // ---- 折り畳み集合の実効値（ISOLATEは全展開／focusはマッチ枝を自動展開）----
-  let effCollapsed: string[] = collapsedWbs;
-  if (isoRemove) effCollapsed = [];
-  if (nb) {
-    const nbTasks = cands.map((c) => c.task);
-    effCollapsed = collapsedWbs.filter((p) => !nbTasks.some((t) => isWbsPrefix(p, t.wbsCode)));
-  }
-  const collapsedSet = new Set(effCollapsed.filter(Boolean));
 
   // ---- 段3: WBSツリー化（buildWbsTree・wbs.ts）----
   const tree = buildWbsTree(cands, (c) => c.task.wbsCode);

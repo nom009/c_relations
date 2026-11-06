@@ -1,7 +1,13 @@
 // ============================================================================
 // テーブルのセル部品と列メタ（§12.3.2）。presentational のみ。仮想化ライブラリ非依存。
 // ============================================================================
-import { DISC_COLOR_ON, type Discipline, type Status, type TableColumnKey } from '../../domain';
+import {
+  DISC_COLOR_ON,
+  STATUS_LABEL,
+  type Discipline,
+  type Status,
+  type TableColumnKey,
+} from '../../domain';
 
 export const ROW_HEIGHT = 44; // 固定行高（§12.3.3。ガント左右ペインと共有する定数）。
 
@@ -41,13 +47,6 @@ export const EDITABLE_COLUMNS: TableColumnKey[] = [
   'progress',
   'durationDays',
 ];
-
-export const STATUS_LABEL: Record<Status, string> = {
-  NOT_STARTED: '未着手',
-  IN_PROGRESS: '進行中',
-  DONE: '完了',
-  ON_HOLD: '保留',
-};
 
 // チップは白文字が乗るため WCAG AA 安全版の工種色（DISC_COLOR_ON）を使う。
 export function DiscChip({ d }: { d: Discipline }) {

@@ -3,6 +3,20 @@ import type { Discipline, Status } from './types';
 export const DISCIPLINES: Discipline[] = ['E', 'P', 'C', 'OTHER'];
 export const STATUSES: Status[] = ['NOT_STARTED', 'IN_PROGRESS', 'DONE', 'ON_HOLD'];
 
+export const DISC_LABEL: Record<Discipline, string> = {
+  E: '設計',
+  P: '調達',
+  C: '施工',
+  OTHER: 'その他',
+};
+
+export const STATUS_LABEL: Record<Status, string> = {
+  NOT_STARTED: '未着手',
+  IN_PROGRESS: '進行中',
+  DONE: '完了',
+  ON_HOLD: '保留',
+};
+
 // 工種色（§2.11）: バー・ドット・エッジ等「文字が乗らない」グラフィック用途の鮮やかな色。
 export const DISC_COLOR: Record<Discipline, string> = {
   E: '#2563eb',

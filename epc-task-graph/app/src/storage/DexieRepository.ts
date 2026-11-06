@@ -8,6 +8,7 @@
 // ============================================================================
 import Dexie, { type Table } from 'dexie';
 import {
+  cloneDocWithNewIds,
   defaultCalendar,
   type Calendar,
   type Dependency,
@@ -48,6 +49,7 @@ interface SnapshotRow {
 }
 
 const SNAPSHOT_KEEP = 5;
+const AUTOSAVE_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 
 class EpcDexie extends Dexie {
   projects!: Table<ProjectRow, string>;
@@ -101,6 +103,7 @@ export class DexieRepository implements GraphRepository {
       this.db.tasks.where('projectId').equals(projectId).toArray(),
       this.db.dependencies.where('projectId').equals(projectId).toArray(),
     ]);
+    const taskIds = new Set(tasks.map((t) => t.id));
     return {
       schemaVersion: p.schemaVersion ?? 1,
       project: stripProjectRow(p),
@@ -109,13 +112,24 @@ export class DexieRepository implements GraphRepository {
       calendars: p.calendars && p.calendars.length ? p.calendars : [defaultCalendar()],
       // projectId フィールドは剥がして返す（GraphDoc は純粋な domain 型）。
       tasks: tasks.map(({ projectId: _pid, ...t }) => t as Task),
-      dependencies: deps.map(({ projectId: _pid, ...d }) => d as Dependency),
+      // 端点タスクが消えた依存（旧版の削除で残った行）は読み飛ばす。
+      dependencies: deps
+        .filter((d) => taskIds.has(d.predecessorId) && taskIds.has(d.successorId))
+        .map(({ projectId: _pid, ...d }) => d as Dependency),
     };
   }
 
   async saveGraph(doc: GraphDoc): Promise<{ version: number }> {
     const { project, tasks, deps } = docToRows(doc);
     await this.db.transaction('rw', this.db.projects, this.db.tasks, this.db.dependencies, async () => {
+      // 主キーは id 単独のため、他プロジェクトの行を上書きしないよう衝突を先に拒否する。
+      const foreignTask = (await this.db.tasks.bulkGet(tasks.map((t) => t.id))).find(
+        (r) => r && r.projectId !== project.id,
+      );
+      const foreignDep = (await this.db.dependencies.bulkGet(deps.map((d) => d.id))).find(
+        (r) => r && r.projectId !== project.id,
+      );
+      if (foreignTask || foreignDep) throw new Error('ID collision with another project');
       // 全量置換（インポート/初回・§6.2）。既存の当該プロジェクト行を消してから入れ直す。
       await this.db.tasks.where('projectId').equals(project.id).delete();
       await this.db.dependencies.where('projectId').equals(project.id).delete();
@@ -172,27 +186,28 @@ export class DexieRepository implements GraphRepository {
 
         // ---- プロジェクト行の周辺データ＋version++ ----
         const p = await this.db.projects.get(pid);
-        if (p) {
-          version = (p.version || 0) + 1;
-          const next: ProjectRow = {
-            ...p,
-            ...(patch.project || {}),
-            version,
-            updatedAt: new Date().toISOString(),
-            viewState: patch.viewState ?? p.viewState,
-            savedViews: patch.savedViews ?? p.savedViews,
-            calendars: patch.calendars ?? p.calendars,
-          };
-          await this.db.projects.put(next);
-        }
+        // 削除済みプロジェクトへの書込は孤児行を生むため、トランザクションごと中断する。
+        if (!p) throw new Error('project not found: ' + pid);
+        version = (p.version || 0) + 1;
+        await this.db.projects.put({
+          ...p,
+          ...(patch.project || {}),
+          version,
+          updatedAt: new Date().toISOString(),
+          viewState: patch.viewState ?? p.viewState,
+          savedViews: patch.savedViews ?? p.savedViews,
+          calendars: patch.calendars ?? p.calendars,
+        } satisfies ProjectRow);
       },
     );
 
     if (conflicts.length) return { ok: false, conflicts };
-    // 保存履歴（5世代）: パッチ適用後の全量を1件スナップショット。
+    // 保存履歴（5世代）: 自動保存は一定間隔ごとにだけ全量スナップショットを残す。
+    // 500msデバウンスの保存ごとに撮ると5世代が数秒で埋まり、履歴として機能しない上に重い。
     try {
-      const doc = await this.loadGraph(pid);
-      await this.snapshot(doc, 'autosave');
+      const last = await this.db.snapshots.where('projectId').equals(pid).reverse().first();
+      const stale = !last || Date.now() - Date.parse(last.createdAt) >= AUTOSAVE_SNAPSHOT_INTERVAL_MS;
+      if (stale) await this.snapshot(await this.loadGraph(pid), 'autosave');
     } catch {
       /* スナップショット失敗は保存本体を妨げない */
     }
@@ -217,7 +232,7 @@ export class DexieRepository implements GraphRepository {
 
   async duplicateProject(projectId: string, newName: string): Promise<GraphDoc> {
     const src = await this.loadGraph(projectId);
-    const doc = remapIds(src, newName);
+    const doc = cloneDocWithNewIds(src, newName);
     await this.saveGraph(doc);
     return doc;
   }
@@ -269,35 +284,6 @@ function stripDepRow(r: DepRow): Dependency {
   const clone: Partial<DepRow> = { ...r };
   delete clone.projectId;
   return clone as Dependency;
-}
-
-// プロジェクト複製時に全 ID を振り直す（依存の両端も対応付ける）。
-function remapIds(src: GraphDoc, newName: string): GraphDoc {
-  const now = new Date().toISOString();
-  const idMap = new Map<string, string>();
-  const newId = () =>
-    globalThis.crypto && crypto.randomUUID
-      ? crypto.randomUUID()
-      : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-  const tasks = src.tasks.map((t) => {
-    const nid = newId();
-    idMap.set(t.id, nid);
-    return { ...t, id: nid };
-  });
-  const dependencies = src.dependencies
-    .map((d) => ({
-      ...d,
-      id: newId(),
-      predecessorId: idMap.get(d.predecessorId)!,
-      successorId: idMap.get(d.successorId)!,
-    }))
-    .filter((d) => d.predecessorId && d.successorId);
-  return {
-    ...src,
-    project: { ...src.project, id: newId(), name: newName, createdAt: now, updatedAt: now, version: 1 },
-    tasks,
-    dependencies,
-  };
 }
 
 // シングルトン（アプリ全体で1接続）。

@@ -11,9 +11,7 @@ import type {
   VisibleNode,
   ViewSpec,
 } from './types';
-import { buildAdjacency, expandBoundary, neighborhood } from './graph';
-import { isFilterActive, matchesFilter } from './filter';
-import { isWbsPrefix } from './wbs';
+import { classify, collapsedRoot, resolveVisibility } from './visibility';
 
 interface Candidate {
   task: Task;
@@ -31,106 +29,47 @@ export function deriveVisibleGraph(
   deps: Dependency[],
   viewSpec: Partial<ViewSpec> | null | undefined,
 ): DeriveResult {
-  const filter = (viewSpec && viewSpec.filter) || {};
-  const displayMode = (viewSpec && viewSpec.displayMode) || 'DIM';
-  const collapsedWbs = (viewSpec && viewSpec.collapsedWbs) || [];
-  const focus = (viewSpec && viewSpec.focus) || null;
-  const boundaryUp = (viewSpec && viewSpec.boundaryUp) || 0;
-  const boundaryDown = (viewSpec && viewSpec.boundaryDown) || 0;
-  const me = (viewSpec && viewSpec.me) || '';
-  const criticalTasks = (viewSpec && viewSpec.criticalTasks) || null;
-  const criticalEdges = (viewSpec && viewSpec.criticalEdges) || null;
+  const v = resolveVisibility(tasks, deps, viewSpec);
+  const { taskById, succ, pred, active, matchSet, nb, criticalTasks } = v;
+  const focus = v.focus;
+  const criticalEdges = viewSpec?.criticalEdges ?? null;
   // CP強調は「トグル ON」かつ「criticalTasks が渡っている」時のみ視覚フラグを立てる。
-  const cpHighlight = !!(viewSpec && viewSpec.cpHighlight) && !!criticalTasks;
-
-  const taskById = new Map<string, Task>();
-  for (const t of tasks) taskById.set(t.id, t);
-  const { succ, pred } = buildAdjacency(deps);
-
-  const active = isFilterActive(filter);
-  const matchSet = new Set<string>();
-  if (active) for (const t of tasks) if (matchesFilter(t, filter, me, criticalTasks)) matchSet.add(t.id);
-
-  let nb: ReturnType<typeof neighborhood> | null = null;
-  if (focus && focus.taskId && taskById.has(focus.taskId)) {
-    nb = neighborhood(focus.taskId, succ, pred, focus.up != null ? focus.up : 2, focus.down != null ? focus.down : 2);
-  }
+  const cpHighlight = !!viewSpec?.cpHighlight && !!criticalTasks;
   // 'highlight'=近傍を強調しつつ全体を残す（非近傍は淡色）。'isolate'（既定）=近傍だけ抽出。
-  const nbHighlight = !!(nb && focus!.mode === 'highlight');
-  const isoRemove = active && displayMode === 'ISOLATE' && !nb;
-
-  // 「担当＋前後」ビュー: フィルタ一致集合から前後の受け渡し先を文脈として含める（§2.9拡張）。
-  // focus 中は無効（focus 優先）。boundary タスクは outside=文脈扱いで表示。
-  const boundarySet =
-    active && !nb && (boundaryUp > 0 || boundaryDown > 0)
-      ? expandBoundary(matchSet, succ, pred, boundaryUp, boundaryDown)
-      : null;
+  const nbHighlight = !!nb && focus!.mode === 'highlight';
 
   const cands: Candidate[] = [];
   for (const t of tasks) {
-    if (nb && nbHighlight) {
-      // 関係ハイライト: 全タスクを残し、近傍を related+世代タグ・非近傍を淡色（dim）。
+    if (nb) {
       const inNb = nb.set.has(t.id);
+      if (!inNb && !nbHighlight) continue;
       cands.push({
         task: t,
         dim: !inNb,
-        outside: false,
+        outside: !nbHighlight && active && !matchSet.has(t.id),
         isOrigin: t.id === focus!.taskId,
         directPred: nb.directPred.has(t.id),
         directSucc: nb.directSucc.has(t.id),
         related: inNb,
         gen: inNb ? nb.gen.get(t.id) : undefined,
       });
-    } else if (nb) {
-      if (!nb.set.has(t.id)) continue;
-      cands.push({
-        task: t,
-        dim: false,
-        outside: active && !matchSet.has(t.id),
-        isOrigin: t.id === focus!.taskId,
-        directPred: nb.directPred.has(t.id),
-        directSucc: nb.directSucc.has(t.id),
-        related: true,
-        gen: nb.gen.get(t.id),
-      });
-    } else if (isoRemove) {
-      // ISOLATE: 一致タスク＋（あれば）前後の受け渡し先だけ残す。受け渡し先は outside=文脈。
-      const isMatch = matchSet.has(t.id);
-      const isBoundary = !!boundarySet && boundarySet.has(t.id);
-      if (!isMatch && !isBoundary) continue;
-      cands.push({ task: t, dim: false, outside: !isMatch });
     } else {
-      // DIM: 一致＝通常／受け渡し先＝outside 文脈／それ以外＝淡色。
-      const isMatch = !active || matchSet.has(t.id);
-      const isBoundary = !!boundarySet && boundarySet.has(t.id);
-      cands.push({
-        task: t,
-        dim: active && displayMode === 'DIM' && !isMatch && !isBoundary,
-        outside: active && !isMatch && isBoundary,
-      });
+      const flags = classify(v, t.id);
+      if (flags) cands.push({ task: t, ...flags });
     }
   }
-  const candIds = new Set(cands.map((c) => c.task.id));
 
-  let effCollapsed: string[] = collapsedWbs;
-  if (isoRemove) effCollapsed = [];
-  // フォーカス中は近傍タスクを含む WBS 枝だけ自動展開（近傍を実タスクとして見せる、§2.9）。
-  // highlight では cands に全タスクが入るため、展開判定は必ず nb.set（実際の近傍）で行う——
-  // さもないと非近傍の枝まで展開され集約が消えて全ノード描画になる。
-  if (nb) {
-    const nbTasks = tasks.filter((t) => nb!.set.has(t.id));
-    effCollapsed = collapsedWbs.filter((p) => !nbTasks.some((t) => isWbsPrefix(p, t.wbsCode)));
+  // 代表ノード: 折り畳まれた最上位祖先の集約ID、なければ自身。候補ごとに1回だけ解決する。
+  const repById = new Map<string, string>();
+  for (const c of cands) {
+    const root = collapsedRoot(c.task.wbsCode, v.collapsed);
+    repById.set(c.task.id, root == null ? c.task.id : 'wbs::' + root);
   }
-  const collapsedSorted = [...new Set(effCollapsed)].filter(Boolean).sort((a, b) => a.length - b.length);
-  const repOf = (task: Task): string => {
-    for (const p of collapsedSorted) if (isWbsPrefix(p, task.wbsCode)) return 'wbs::' + p;
-    return task.id;
-  };
 
   const nodeMap = new Map<string, VisibleNode>();
   const aggMembers = new Map<string, Candidate[]>();
   for (const c of cands) {
-    const rep = repOf(c.task);
+    const rep = repById.get(c.task.id)!;
     if (rep.startsWith('wbs::')) {
       if (!aggMembers.has(rep)) aggMembers.set(rep, []);
       aggMembers.get(rep)!.push(c);
@@ -185,10 +124,9 @@ export function deriveVisibleGraph(
 
   const edgeMap = new Map<string, VisibleEdge>();
   for (const d of deps) {
-    if (!candIds.has(d.predecessorId) || !candIds.has(d.successorId)) continue;
-    const a = repOf(taskById.get(d.predecessorId)!);
-    const b = repOf(taskById.get(d.successorId)!);
-    if (a === b) continue;
+    const a = repById.get(d.predecessorId);
+    const b = repById.get(d.successorId);
+    if (a === undefined || b === undefined || a === b) continue;
     if (!nodeMap.has(a) || !nodeMap.has(b)) continue;
     const key = a + '->' + b;
     const isAgg = a.startsWith('wbs::') || b.startsWith('wbs::');
@@ -203,14 +141,11 @@ export function deriveVisibleGraph(
   }
 
   // フォーカスの continuation 集約（§2.9「折り畳み先への継続がバッジで見える」）。
-  if (nb) {
+  // highlight では非近傍も実ノードとして描かれるため不要（重複・偽の循環になる）。
+  if (nb && !nbHighlight) {
     const level2 = (code: string): string => {
       const seg = (code || '').split('.').filter(Boolean);
       return seg.length >= 2 ? seg.slice(0, 2).join('.') : code || '（ルート）';
-    };
-    const repOfId = (id: string): string => {
-      const t = taskById.get(id);
-      return t ? repOf(t) : id;
     };
     interface ContGroup {
       prefix: string;
@@ -223,13 +158,14 @@ export function deriveVisibleGraph(
     const groups = new Map<string, ContGroup>();
     for (const c of cands) {
       const id = c.task.id;
-      const repA = repOfId(id);
+      const repA = repById.get(id)!;
       if (!nodeMap.has(repA)) continue;
       const addCont = (otherId: string, isSucc: boolean) => {
         if (nb!.set.has(otherId)) return;
         const ot = taskById.get(otherId);
         if (!ot) return;
-        const key = 'cont::' + level2(ot.wbsCode);
+        // 上流/下流を別ノードにする（同じ WBS に集約すると偽の循環が描かれる）。
+        const key = 'cont::' + (isSucc ? 'down' : 'up') + '::' + level2(ot.wbsCode);
         if (!groups.has(key))
           groups.set(key, { prefix: level2(ot.wbsCode), tasks: new Set(), out: new Set(), in: new Set(), sx: 0, sy: 0 });
         const g = groups.get(key)!;

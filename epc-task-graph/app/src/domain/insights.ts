@@ -1,17 +1,6 @@
-import type { Task, Dependency, Discipline } from "./types";
+import type { Task, Dependency } from "./types";
 import type { CpmResult } from "./cpm";
-export const DISC_LABEL: Record<Discipline, string> = {
-  E: "設計",
-  P: "調達",
-  C: "施工",
-  OTHER: "その他",
-};
-export const STATUS_LABEL = {
-  NOT_STARTED: "未着手",
-  IN_PROGRESS: "進行中",
-  DONE: "完了",
-  ON_HOLD: "保留",
-};
+import { DISCIPLINES } from "./constants";
 export function weightedProgress(tasks: Task[]): number {
   const work = tasks.filter((t) => !t.isMilestone);
   const total = work.reduce((sum, t) => sum + Math.max(0, t.durationDays), 0);
@@ -55,7 +44,7 @@ export function deriveInsights(
       (a, b) =>
         (cpm.byTask.get(a.id)?.ef ?? 0) - (cpm.byTask.get(b.id)?.ef ?? 0),
     );
-  const groups = (["E", "P", "C", "OTHER"] as Discipline[])
+  const groups = DISCIPLINES
     .map((d) => ({
       discipline: d,
       tasks: tasks.filter((t) => t.discipline === d),

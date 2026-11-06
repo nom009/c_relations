@@ -1,14 +1,17 @@
 import { useMemo } from "react";
 import { useApp } from "../../store/store";
-import { useCpm } from "../../store/useCpm";
+import { useCpm } from "../../store/hooks";
 import {
   deriveInsights,
   weightedProgress,
   shortDate,
+} from "../../domain/insights";
+import {
   DISC_LABEL,
   STATUS_LABEL,
-} from "../../domain/insights";
-import type { ActiveView, Task } from "../../domain";
+  type ActiveView,
+  type Task,
+} from "../../domain";
 import { Icon } from "./Icon";
 
 export function Overview({

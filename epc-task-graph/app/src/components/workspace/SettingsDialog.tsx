@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useApp, selectActiveCalendar } from "../../store/store";
+import { isValidIsoDate } from "../../domain";
 import { Dialog } from "./Dialog";
 export function SettingsDialog({
   onClose,
@@ -50,7 +51,7 @@ export function SettingsDialog({
               workingDays: working,
               holidays: holidays
                 .split(/[\s,]+/)
-                .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+                .filter(isValidIsoDate),
             });
           }
           s.showToast(
@@ -65,7 +66,7 @@ export function SettingsDialog({
             プロジェクト名
             <input
               required
-              autoFocus
+              data-autofocus
               maxLength={120}
               value={name}
               onChange={(e) => setName(e.target.value)}

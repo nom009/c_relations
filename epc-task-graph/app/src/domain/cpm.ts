@@ -92,8 +92,9 @@ export function computeCpm(
   const order: string[] = [];
   const idegWork = new Map(indeg);
   const qq = [...queue];
-  while (qq.length) {
-    const cur = qq.shift()!;
+  // shift() は O(n) なので、読み出し位置を進める方式で O(V+E) を保つ。
+  for (let qi = 0; qi < qq.length; qi++) {
+    const cur = qq[qi];
     order.push(cur);
     for (const s of succ.get(cur) || []) {
       idegWork.set(s, idegWork.get(s)! - 1);
@@ -102,7 +103,8 @@ export function computeCpm(
   }
   // 循環があれば残りを末尾に足して部分計算だけ返す（クラッシュ回避）。
   if (order.length !== tasks.length) {
-    for (const t of tasks) if (!order.includes(t.id)) order.push(t.id);
+    const placed = new Set(order);
+    for (const t of tasks) if (!placed.has(t.id)) order.push(t.id);
   }
 
   const dur = (id: string): number => {
@@ -130,13 +132,16 @@ export function computeCpm(
   // ---- 稼働カレンダー（§9.1 / Phase2）: 所要日数は「稼働日」で数え、非稼働日（休日曜日/祝日）は
   //   スケジュールが跨ぐ＝暦日で伸びる。es/ef は暦日オフセットのまま（ガントの線形軸を保つ）。
   //   workingDays が全曜日かつ祝日なしなら線形（従来どおり EF=ES+d）で高速化＝既存挙動を厳密維持。
-  const wdSet = new Set(calendar?.workingDays ?? [0, 1, 2, 3, 4, 5, 6]);
+  // 不正なカレンダー（空・範囲外の曜日）は暴走防止のため無視して全曜日稼働に戻す。
+  const validDays = (calendar?.workingDays ?? []).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+  const wdSet = new Set(validDays.length ? validDays : [0, 1, 2, 3, 4, 5, 6]);
   const holSet = new Set((calendar?.holidays ?? []).map((h) => h.slice(0, 10)));
   const linearCal = wdSet.size >= 7 && holSet.size === 0;
   const baseMs = parseISODate(startDate);
+  const baseDow = new Date(baseMs).getUTCDay();
   const isWorking = (off: number): boolean => {
     if (linearCal) return true;
-    const dow = new Date(baseMs + off * 86400000).getUTCDay();
+    const dow = (((baseDow + Math.floor(off)) % 7) + 7) % 7;
     if (!wdSet.has(dow)) return false;
     return holSet.size === 0 || !holSet.has(dateAt(off));
   };
@@ -241,31 +246,29 @@ export function computeCpm(
   for (let i = order.length - 1; i >= 0; i--) {
     const id = order[i];
     const d = dur(id);
-    const outs = outgoing.get(id);
+    // LF は projectEnd を上限に、各後続の要求で更に絞る（SS/SF や負ラグで projectEnd を超える要求は無視）。
     let finish = projectEnd;
-    if (outs && outs.length) {
-      finish = Infinity;
-      for (const dep of outs) {
-        const s = dep.successorId;
-        const lag = dep.lagDays || 0;
-        let req: number;
-        switch (dep.type) {
-          case 'SS':
-            req = lfFromLs((ls.get(s) ?? projectEnd) - lag, d); // LS_p ≤ LS_s−lag を LF_p 上限へ
-            break;
-          case 'FF':
-            req = (lf.get(s) ?? projectEnd) - lag;
-            break;
-          case 'SF':
-            req = lfFromLs((lf.get(s) ?? projectEnd) - lag, d); // LS_p ≤ LF_s−lag を LF_p 上限へ
-            break;
-          case 'FS':
-          default:
-            req = (ls.get(s) ?? projectEnd) - lag;
-            break;
-        }
-        if (req < finish) finish = req;
+    for (const dep of outgoing.get(id) ?? []) {
+      const s = dep.successorId;
+      const lag = dep.lagDays || 0;
+      let req: number;
+      switch (dep.type) {
+        case 'SS':
+          req = lfFromLs((ls.get(s) ?? projectEnd) - lag, d); // LS_p ≤ LS_s−lag を LF_p 上限へ
+          break;
+        // 前進側は EF 要求を非稼働日で切り下げるため、後退側は LF_s を次の稼働日まで切り上げて対称にする。
+        case 'FF':
+          req = nextWorking(lf.get(s) ?? projectEnd) - lag;
+          break;
+        case 'SF':
+          req = lfFromLs(nextWorking(lf.get(s) ?? projectEnd) - lag, d); // LS_p ≤ LF_s−lag を LF_p 上限へ
+          break;
+        case 'FS':
+        default:
+          req = (ls.get(s) ?? projectEnd) - lag;
+          break;
       }
+      if (req < finish) finish = req;
     }
     // FNLT（Finish No Later Than）: この日までに終える → LF を上限で丸める。
     // 前進 EF より早い期限なら TF が負になり「遅延（要注意）」としてクリティカル化する。
@@ -309,7 +312,8 @@ export function computeCpm(
   for (const d of deps) {
     if (!criticalTasks.has(d.predecessorId) || !criticalTasks.has(d.successorId)) continue;
     const s = d.successorId;
-    const req = forwardReq(d.type, d.predecessorId, d.lagDays || 0, dur(s));
+    // 後続 ES は前進計算で 0 下限・稼働日丸めされているため、要件も同じ丸めをして比較する。
+    const req = nextWorking(Math.max(0, forwardReq(d.type, d.predecessorId, d.lagDays || 0, dur(s))));
     const sEs = es.get(s);
     if (sEs != null && Math.abs(sEs - req) < 1e-9) criticalEdges.add(d.id);
   }

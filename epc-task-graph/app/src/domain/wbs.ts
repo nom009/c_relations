@@ -8,6 +8,15 @@ export function isWbsPrefix(prefix: string, code: string): boolean {
   return code === prefix || code.startsWith(prefix + '.');
 }
 
+// isWbsPrefix(p, code) が true になる全 p を短い順に返す（生文字列のまま・正規化しない）。
+export function wbsPrefixesOf(code: string): string[] {
+  const out: string[] = [];
+  if (!code) return out;
+  for (let i = code.indexOf('.'); i !== -1; i = code.indexOf('.', i + 1)) if (i > 0) out.push(code.slice(0, i));
+  out.push(code);
+  return out;
+}
+
 // 展開レベル level を超える深さのタスクを、level 段でまとめる折り畳み集合を返す。
 export function collapsedForLevel(tasks: Task[], level: number): string[] {
   const set = new Set<string>();

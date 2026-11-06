@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { useApp, selectActiveCalendar, flushPersistence } from "../store/store";
 import { selectCpm } from "../store/selectors";
-import { validateDoc, wbsPath, toMspdi, fromMspdi, emptyDoc } from "../domain";
+import { useSelectedTask } from "../store/hooks";
+import { validateDoc, parseDoc, cloneDocWithNewIds, wbsPath, toMspdi, fromMspdi, emptyDoc } from "../domain";
 
 // データ入出力メニュー（ツールバー整理・§1.3）: JSON/MSPDI の出力・取込を1つのドロップダウンに集約。
 function DataMenu({
@@ -211,11 +212,10 @@ export function Header({
           useApp.getState().showToast("MSPDIにタスクが見つかりません", true);
           return;
         }
-        const doc = emptyDoc(
+        const doc = cloneDocWithNewIds(
+          { ...emptyDoc(), tasks, dependencies },
           "MSPDI取込 " + new Date().toISOString().slice(0, 10),
         );
-        doc.tasks = tasks;
-        doc.dependencies = dependencies;
         const v = validateDoc(doc);
         if (!v.ok) {
           useApp
@@ -226,7 +226,7 @@ export function Header({
             );
           return;
         }
-        await flushPersistence();
+        if (!(await flushPersistence().then(() => true, () => false))) return;
         useApp.getState().loadDoc(doc);
         useApp.getState().layoutAll(); // 位置(0,0)を左→右DAGへ整列
         useApp
@@ -236,6 +236,8 @@ export function Header({
         useApp.getState().showToast("MSPDI解析に失敗しました", true);
       }
     };
+    reader.onerror = () =>
+      useApp.getState().showToast("ファイルを読み込めませんでした", true);
     reader.readAsText(file);
   };
 
@@ -254,8 +256,8 @@ export function Header({
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        const doc = JSON.parse(reader.result as string);
-        const v = validateDoc(doc);
+        const raw = JSON.parse(reader.result as string);
+        const v = validateDoc(raw);
         if (!v.ok) {
           useApp
             .getState()
@@ -265,7 +267,10 @@ export function Header({
             );
           return;
         }
-        await flushPersistence();
+        // 既存プロジェクトの行を上書きしないよう、常に新規IDの別プロジェクトとして取り込む。
+        const doc = cloneDocWithNewIds(parseDoc(raw)!, raw.project.name);
+        // 未保存の編集を失わないよう、保存に失敗したら取込を中止する（失敗の通知は flushPersistence が出す）。
+        if (!(await flushPersistence().then(() => true, () => false))) return;
         useApp.getState().loadDoc(doc);
         useApp.getState().fit(200);
         useApp
@@ -275,6 +280,8 @@ export function Header({
         useApp.getState().showToast("JSON解析に失敗しました", true);
       }
     };
+    reader.onerror = () =>
+      useApp.getState().showToast("ファイルを読み込めませんでした", true);
     reader.readAsText(file);
   };
 
@@ -351,7 +358,7 @@ export function Header({
 }
 
 export function Breadcrumb() {
-  const task = useApp((s) => s.tasks.find((t) => t.id === s.selection.taskId));
+  const task = useSelectedTask();
   if (!task) return <div className="breadcrumb">タスク未選択</div>;
   const path = wbsPath(task.wbsCode);
   return (

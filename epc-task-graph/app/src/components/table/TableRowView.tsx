@@ -2,7 +2,7 @@
 // テーブル1行の描画（§12.3.2）。memo＋安定 props。編集は全て親→ストアアクション経由。
 // 仮想化ライブラリには依存しない（TableView が絶対配置で位置決めする）。
 // ============================================================================
-import { memo, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import {
   wbsPath,
   type CpmTaskResult,
@@ -14,6 +14,7 @@ import {
 } from '../../domain';
 import { DISCIPLINES, STATUSES } from '../../domain';
 import { useApp } from '../../store/store';
+import { selectTaskIndex } from '../../store/selectors';
 import {
   COLUMN_META,
   DiscChip,
@@ -100,7 +101,25 @@ function EditInput({
       </select>
     );
   }
-  // text / number 系（wbsCode / name / assignee / progress / durationDays）
+  return (
+    <TextEdit col={col} task={task} assigneeOptions={assigneeOptions} onCommit={onCommit} onCancel={onCancel} />
+  );
+}
+
+// text / number 系（wbsCode / name / assignee / progress / durationDays）
+function TextEdit({
+  col,
+  task,
+  assigneeOptions,
+  onCommit,
+  onCancel,
+}: {
+  col: TableColumnKey;
+  task: Task;
+  assigneeOptions: string[];
+  onCommit: (patch: Partial<Task>, advance: boolean) => void;
+  onCancel: () => void;
+}) {
   const numeric = col === 'progress' || col === 'durationDays';
   const initial =
     col === 'wbsCode'
@@ -112,7 +131,13 @@ function EditInput({
           : col === 'progress'
             ? String(task.progress)
             : String(task.durationDays);
+  const done = useRef(false);
+  const draft = useRef(initial);
   const commit = (raw: string, advance: boolean) => {
+    if (done.current) return; // blur と Enter/アンマウントの二重確定を防ぐ
+    done.current = true;
+    // 数値欄の空欄は 0 ではなく取消扱い（消して打ち直す途中で 0 が確定しないように）。
+    if (numeric && raw.trim() === '') return onCancel();
     // wbsCode 編集: 確定でツリーが再構築され行が新WBSへ移動する（deriveTableRows が毎回再導出）。
     if (col === 'wbsCode') onCommit({ wbsCode: raw.trim() }, advance);
     else if (col === 'name') onCommit({ name: raw }, advance);
@@ -125,6 +150,20 @@ function EditInput({
       onCommit({ durationDays: n }, advance);
     }
   };
+  const cancel = () => {
+    done.current = true;
+    onCancel();
+  };
+  // 仮想スクロールで行が画面外へ外れ破棄されても、入力途中の値を失わない。
+  const latest = useRef({ commit, initial });
+  latest.current = { commit, initial };
+  useEffect(
+    () => () => {
+      const l = latest.current;
+      if (draft.current !== l.initial) l.commit(draft.current, false);
+    },
+    [],
+  );
   return (
     <>
       <input
@@ -135,13 +174,16 @@ function EditInput({
         max={col === 'progress' ? 100 : undefined}
         list={col === 'assignee' ? 'assignee-options' : undefined}
         defaultValue={initial}
+        onChange={(e) => {
+          draft.current = e.target.value;
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
             commit((e.target as HTMLInputElement).value, true);
           } else if (e.key === 'Escape') {
             e.preventDefault();
-            onCancel();
+            cancel();
           }
         }}
         onBlur={(e) => commit(e.target.value, false)}
@@ -193,7 +235,8 @@ function DepsPopover({
   // 参照とジャンプに限定（§12.3.6）。描画時にストアから直接読む（軽量・依存編集はしない）。
   const deps = useApp((s) => s.dependencies);
   const tasks = useApp((s) => s.tasks);
-  const nameOf = (id: string) => tasks.find((t) => t.id === id)?.name || id.slice(0, 6);
+  const byId = selectTaskIndex(tasks);
+  const nameOf = (id: string) => byId.get(id)?.name || id.slice(0, 6);
   const preds = deps.filter((d) => d.successorId === taskId);
   const succs = deps.filter((d) => d.predecessorId === taskId);
   return (

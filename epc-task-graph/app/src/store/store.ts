@@ -28,6 +28,7 @@ import {
   type ViewSpec,
   type ViewState,
   canConnect,
+  isValidIsoDate,
   makeDep,
   makeTask,
   nowISO,
@@ -53,6 +54,24 @@ const LS_ME = "epc-app-me";
 const LS_ACTIVE_VIEW = "epc-app-active-view";
 const LS_TABLE_COLUMNS = "epc-app-table-columns";
 const LS_DEFAULT_VIEW = "epc-app-default-view"; // 起動時に自動適用する保存ビューID（実用化の入口）
+
+// localStorage は無効化/容量超過で例外を投げうる。UI設定の記憶は失敗しても無視してよい。
+function readPref(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writePref(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
 
 // 表示列の正準順（§12.3.2）。TableView はこの順で、tableColumns に含まれる列だけを描画する。
 export const ALL_TABLE_COLUMNS: TableColumnKey[] = [
@@ -106,6 +125,24 @@ export interface DirtyState {
   deps: Set<string>;
   deletedTasks: Set<string>;
   deletedDeps: Set<string>;
+}
+
+const emptyDirty = (): DirtyState => ({
+  tasks: new Set(),
+  deps: new Set(),
+  deletedTasks: new Set(),
+  deletedDeps: new Set(),
+});
+
+const noSelection = (): Selection => ({ taskId: null, edgeId: null, aggId: null });
+
+// 折り畳み状態は表示（viewSpec）と永続（viewState）の両方へ同じ値を書く。
+function setCollapsedWbs(
+  s: { viewSpec: { collapsedWbs: string[] }; viewState: { collapsedWbs: string[] } },
+  collapsedWbs: string[],
+): void {
+  s.viewSpec.collapsedWbs = collapsedWbs;
+  s.viewState.collapsedWbs = collapsedWbs;
 }
 
 export interface Runners {
@@ -283,12 +320,7 @@ export function flushPersistence(): Promise<void> {
       if (useApp.getState().project.id !== doc.project.id) continue;
       if (generation === saveGeneration) {
         useApp.setState((s) => {
-          s.dirty = {
-            tasks: new Set(),
-            deps: new Set(),
-            deletedTasks: new Set(),
-            deletedDeps: new Set(),
-          };
+          s.dirty = emptyDirty();
           s.saveStatus = "saved";
         });
       }
@@ -321,31 +353,46 @@ function scheduleSave() {
 
 function restoreHistory(direction: "undo" | "redo") {
   const before = useApp.getState();
-  const taskIds = new Set(before.tasks.map((t) => t.id));
-  const depIds = new Set(before.dependencies.map((d) => d.id));
+  const beforeTasks = new Map(before.tasks.map((t) => [t.id, t]));
+  const beforeDeps = new Map(before.dependencies.map((d) => [d.id, d]));
   useApp.temporal.getState()[direction]();
+  // 変わった行だけをダーティにする（immer の構造共有により未変更行は同一参照）。
+  // 参照比較は draft ではなく確定済み状態で行う。
+  const after = useApp.getState();
+  const currentTasks = new Map(after.tasks.map((t) => [t.id, t]));
+  const currentDeps = new Map(after.dependencies.map((d) => [d.id, d]));
+  const changedTasks: string[] = [];
+  const removedTasks: string[] = [];
+  for (const id of new Set([...beforeTasks.keys(), ...currentTasks.keys()])) {
+    if (!currentTasks.has(id)) removedTasks.push(id);
+    else if (beforeTasks.get(id) !== currentTasks.get(id)) changedTasks.push(id);
+  }
+  const changedDeps: string[] = [];
+  const removedDeps: string[] = [];
+  for (const id of new Set([...beforeDeps.keys(), ...currentDeps.keys()])) {
+    if (!currentDeps.has(id)) removedDeps.push(id);
+    else if (beforeDeps.get(id) !== currentDeps.get(id)) changedDeps.push(id);
+  }
   useApp.setState((s) => {
-    const currentTasks = new Set(s.tasks.map((t) => t.id));
-    const currentDeps = new Set(s.dependencies.map((d) => d.id));
-    for (const id of new Set([...taskIds, ...currentTasks])) {
-      if (currentTasks.has(id)) {
-        s.dirty.tasks.add(id);
-        s.dirty.deletedTasks.delete(id);
-      } else {
-        s.dirty.tasks.delete(id);
-        s.dirty.deletedTasks.add(id);
-      }
+    for (const id of changedTasks) {
+      s.dirty.tasks.add(id);
+      s.dirty.deletedTasks.delete(id);
     }
-    for (const id of new Set([...depIds, ...currentDeps])) {
-      if (currentDeps.has(id)) {
-        s.dirty.deps.add(id);
-        s.dirty.deletedDeps.delete(id);
-      } else {
-        s.dirty.deps.delete(id);
-        s.dirty.deletedDeps.add(id);
-      }
+    for (const id of removedTasks) {
+      s.dirty.tasks.delete(id);
+      s.dirty.deletedTasks.add(id);
+    }
+    for (const id of changedDeps) {
+      s.dirty.deps.add(id);
+      s.dirty.deletedDeps.delete(id);
+    }
+    for (const id of removedDeps) {
+      s.dirty.deps.delete(id);
+      s.dirty.deletedDeps.add(id);
     }
     s.selectedIds = s.selectedIds.filter((id) => currentTasks.has(id));
+    if (s.connectSource && !currentTasks.has(s.connectSource))
+      s.connectSource = null;
     if (s.selection.taskId && !currentTasks.has(s.selection.taskId))
       s.selection.taskId = null;
   });
@@ -404,26 +451,17 @@ export async function bootstrapStore(): Promise<void> {
 }
 
 function initialMe(): string {
-  try {
-    return localStorage.getItem(LS_ME) || "私";
-  } catch {
-    return "私";
-  }
+  return readPref(LS_ME) || "私";
 }
 
 function initialActiveView(): ActiveView {
-  try {
-    const v = localStorage.getItem(LS_ACTIVE_VIEW);
-    if (v === "graph" || v === "table" || v === "gantt") return v;
-  } catch {
-    /* ignore */
-  }
-  return "graph";
+  const v = readPref(LS_ACTIVE_VIEW);
+  return v === "graph" || v === "table" || v === "gantt" ? v : "graph";
 }
 
 function initialTableColumns(): TableColumnKey[] {
   try {
-    const raw = localStorage.getItem(LS_TABLE_COLUMNS);
+    const raw = readPref(LS_TABLE_COLUMNS);
     if (raw) {
       const parsed = JSON.parse(raw) as unknown;
       if (Array.isArray(parsed)) {
@@ -494,17 +532,12 @@ export const useApp = create<AppState>()(
         me: me0,
       },
       expandLevel: doc0.viewState.expandLevel || 2,
-      selection: { taskId: null, edgeId: null, aggId: null },
+      selection: noSelection(),
       selectedIds: [],
       editingId: null,
       toast: [],
       saveStatus: "saved",
-      dirty: {
-        tasks: new Set(),
-        deps: new Set(),
-        deletedTasks: new Set(),
-        deletedDeps: new Set(),
-      },
+      dirty: emptyDirty(),
       runners: {},
       cpHighlight: false,
       connectMode: false,
@@ -515,13 +548,7 @@ export const useApp = create<AppState>()(
       activeView: initialActiveView(),
       tableSort: [],
       tableColumns: initialTableColumns(),
-      defaultViewId: (() => {
-        try {
-          return localStorage.getItem(LS_DEFAULT_VIEW) || null;
-        } catch {
-          return null;
-        }
-      })(),
+      defaultViewId: readPref(LS_DEFAULT_VIEW) || null,
 
       setRunner: (name, fn) =>
         set((s) => {
@@ -532,11 +559,7 @@ export const useApp = create<AppState>()(
           get().runners.fitView?.();
         }, delay),
       setMe: (me) => {
-        try {
-          localStorage.setItem(LS_ME, me);
-        } catch {
-          /* ignore */
-        }
+        writePref(LS_ME, me);
         set((s) => {
           s.me = me;
           s.viewSpec.me = me;
@@ -613,11 +636,17 @@ export const useApp = create<AppState>()(
         const idset = new Set(ids);
         set((s) => {
           s.tasks = s.tasks.filter((t) => !idset.has(t.id));
-          s.dependencies = s.dependencies.filter(
-            (d) => !idset.has(d.predecessorId) && !idset.has(d.successorId),
-          );
+          // 付随する依存も削除として記録する（DB 側に連鎖削除はない）。
+          s.dependencies = s.dependencies.filter((d) => {
+            const keep =
+              !idset.has(d.predecessorId) && !idset.has(d.successorId);
+            if (!keep) s.dirty.deletedDeps.add(d.id);
+            return keep;
+          });
           for (const id of ids) s.dirty.deletedTasks.add(id);
           s.selectedIds = s.selectedIds.filter((id) => !idset.has(id));
+          if (s.connectSource && idset.has(s.connectSource))
+            s.connectSource = null;
           if (s.selection.taskId && idset.has(s.selection.taskId))
             s.selection = {
               taskId: s.selectedIds[s.selectedIds.length - 1] || null,
@@ -632,6 +661,12 @@ export const useApp = create<AppState>()(
           );
       },
       addDependencyChecked: (source, target) => {
+        const tasks = get().tasks;
+        if (
+          !tasks.some((t) => t.id === source) ||
+          !tasks.some((t) => t.id === target)
+        )
+          return false; // 削除済みタスクへの依存（孤児行）を作らない
         const chk = canConnect(source, target, get().dependencies);
         if (!chk.ok) {
           get().showToast(explainReject(chk, get()), true);
@@ -702,7 +737,7 @@ export const useApp = create<AppState>()(
         }),
       setSelection: (sel) =>
         set((s) => {
-          s.selection = { taskId: null, edgeId: null, aggId: null, ...sel };
+          s.selection = { ...noSelection(), ...sel };
           s.selectedIds = []; // 単一選択に戻す（多選択はテーブルの明示操作でのみ張る）
         }),
       // 範囲選択の確定（Shift+クリック等）: ids をそのまま多選択とし、アンカーを selection.taskId に。
@@ -784,20 +819,16 @@ export const useApp = create<AppState>()(
         }),
       setExpandLevel: (n) => {
         set((s) => {
-          const collapsedWbs = collapsedForLevel(s.tasks, n);
           s.expandLevel = n;
-          s.viewSpec.collapsedWbs = collapsedWbs;
-          s.viewState.collapsedWbs = collapsedWbs;
+          setCollapsedWbs(s, collapsedForLevel(s.tasks, n));
           s.viewState.expandLevel = n;
         });
         scheduleSave();
       },
       collapseAll: () => {
         set((s) => {
-          const collapsedWbs = allTopPrefixes(s.tasks);
           s.expandLevel = 1;
-          s.viewSpec.collapsedWbs = collapsedWbs;
-          s.viewState.collapsedWbs = collapsedWbs;
+          setCollapsedWbs(s, allTopPrefixes(s.tasks));
           s.viewState.expandLevel = 1;
         });
         scheduleSave();
@@ -805,24 +836,19 @@ export const useApp = create<AppState>()(
       expandAggregate: (aggId) => {
         set((s) => {
           const prefix = aggId.startsWith("wbs::") ? aggId.slice(5) : aggId;
-          const collapsedWbs = s.viewSpec.collapsedWbs.filter(
-            (p) => p !== prefix,
-          );
-          s.viewSpec.collapsedWbs = collapsedWbs;
-          s.viewState.collapsedWbs = collapsedWbs;
-          s.selection = { taskId: null, edgeId: null, aggId: null };
+          setCollapsedWbs(s, s.viewSpec.collapsedWbs.filter((p) => p !== prefix));
+          s.selection = noSelection();
           s.selectedIds = [];
         });
         scheduleSave();
       },
       toggleCollapse: (prefix) => {
         set((s) => {
-          const has = s.viewSpec.collapsedWbs.includes(prefix);
-          const collapsedWbs = has
-            ? s.viewSpec.collapsedWbs.filter((p) => p !== prefix)
-            : [...s.viewSpec.collapsedWbs, prefix];
-          s.viewSpec.collapsedWbs = collapsedWbs;
-          s.viewState.collapsedWbs = collapsedWbs;
+          const cur = s.viewSpec.collapsedWbs;
+          setCollapsedWbs(
+            s,
+            cur.includes(prefix) ? cur.filter((p) => p !== prefix) : [...cur, prefix],
+          );
         });
         scheduleSave();
       },
@@ -874,7 +900,7 @@ export const useApp = create<AppState>()(
             s.selection.edgeId ||
             s.selection.aggId
           ) {
-            s.selection = { taskId: null, edgeId: null, aggId: null };
+            s.selection = noSelection();
           }
         }),
       // 「自分のタスク」＝担当で絞る＋前後1世代の受け渡し先を文脈表示（担当＋前後ビューの既定）。
@@ -983,9 +1009,7 @@ export const useApp = create<AppState>()(
         set((s) => {
           s.viewSpec.filter = JSON.parse(JSON.stringify(v.filter));
           s.viewSpec.displayMode = v.displayMode;
-          const collapsed = v.collapsedWbs ?? [];
-          s.viewSpec.collapsedWbs = [...collapsed];
-          s.viewState.collapsedWbs = [...collapsed];
+          setCollapsedWbs(s, [...(v.collapsedWbs ?? [])]);
           s.viewSpec.focus = null;
           if (v.tableSort) {
             s.tableSort = v.tableSort.filter(
@@ -1001,14 +1025,7 @@ export const useApp = create<AppState>()(
             if (valid.length) s.tableColumns = valid;
           }
         });
-        try {
-          localStorage.setItem(
-            LS_TABLE_COLUMNS,
-            JSON.stringify(get().tableColumns),
-          );
-        } catch {
-          /* ignore */
-        }
+        writePref(LS_TABLE_COLUMNS, JSON.stringify(get().tableColumns));
         get().fit();
         get().showToast("ビューを適用しました: " + v.name);
       },
@@ -1017,12 +1034,7 @@ export const useApp = create<AppState>()(
           s.savedViews = s.savedViews.filter((v) => v.id !== id);
           if (s.defaultViewId === id) s.defaultViewId = null; // 既定だったビューを消したら既定も解除
         });
-        try {
-          if (get().defaultViewId === null)
-            localStorage.removeItem(LS_DEFAULT_VIEW);
-        } catch {
-          /* ignore */
-        }
+        if (get().defaultViewId === null) writePref(LS_DEFAULT_VIEW, null);
         scheduleSave();
       },
       // 既定ビュー: 同じIDを再指定したら解除（トグル）。起動時に bootstrapStore が自動適用する。
@@ -1030,22 +1042,12 @@ export const useApp = create<AppState>()(
         set((s) => {
           s.defaultViewId = s.defaultViewId === id ? null : id;
         });
-        try {
-          const cur = get().defaultViewId;
-          if (cur) localStorage.setItem(LS_DEFAULT_VIEW, cur);
-          else localStorage.removeItem(LS_DEFAULT_VIEW);
-        } catch {
-          /* ignore */
-        }
+        writePref(LS_DEFAULT_VIEW, get().defaultViewId);
       },
 
       // ---- 多ビュー（§12.2）: 表示状態アクション（Undo対象外・Dexie非永続）----
       setActiveView: (v) => {
-        try {
-          localStorage.setItem(LS_ACTIVE_VIEW, v);
-        } catch {
-          /* ignore */
-        }
+        writePref(LS_ACTIVE_VIEW, v);
         set((s) => {
           s.activeView = v;
         });
@@ -1089,14 +1091,7 @@ export const useApp = create<AppState>()(
                 (k) => k === key || s.tableColumns.includes(k),
               );
         });
-        try {
-          localStorage.setItem(
-            LS_TABLE_COLUMNS,
-            JSON.stringify(get().tableColumns),
-          );
-        } catch {
-          /* ignore */
-        }
+        writePref(LS_TABLE_COLUMNS, JSON.stringify(get().tableColumns));
       },
       // 選択対象を必ず見せる（§12.2）: 祖先WBSプレフィックスを collapsedWbs から除去＋選択。
       // 'wbs::'+prefix のID規約は集約ノードと共有。検索ジャンプ（§2.6）にも将来流用。
@@ -1105,12 +1100,8 @@ export const useApp = create<AppState>()(
           const t = s.tasks.find((x) => x.id === taskId);
           if (!t) return;
           const ancestors = new Set(wbsPath(t.wbsCode));
-          const collapsedWbs = s.viewSpec.collapsedWbs.filter(
-            (p) => !ancestors.has(p),
-          );
-          s.viewSpec.collapsedWbs = collapsedWbs;
-          s.viewState.collapsedWbs = collapsedWbs;
-          s.selection = { taskId, edgeId: null, aggId: null };
+          setCollapsedWbs(s, s.viewSpec.collapsedWbs.filter((p) => !ancestors.has(p)));
+          s.selection = { ...noSelection(), taskId };
           s.selectedIds = [];
         }),
 
@@ -1146,9 +1137,11 @@ export const useApp = create<AppState>()(
           s.calendars = doc.calendars;
           s.tasks = doc.tasks;
           s.dependencies = doc.dependencies;
-          s.selection = { taskId: null, edgeId: null, aggId: null };
+          s.selection = noSelection();
           s.selectedIds = [];
           s.editingId = null;
+          s.connectMode = false;
+          s.connectSource = null;
           s.viewSpec = {
             filter: {},
             displayMode: "DIM",
@@ -1157,12 +1150,7 @@ export const useApp = create<AppState>()(
             me: s.me,
           };
           s.expandLevel = doc.viewState.expandLevel || 2;
-          s.dirty = {
-            tasks: new Set(),
-            deps: new Set(),
-            deletedTasks: new Set(),
-            deletedDeps: new Set(),
-          };
+          s.dirty = emptyDirty();
           s.saveStatus = pendingFullSave ? "dirty" : "saved";
         });
         useApp.temporal.getState().clear(); // 新ドキュメントは履歴を持ち越さない
@@ -1211,6 +1199,7 @@ export const useApp = create<AppState>()(
         scheduleSave();
       },
       setDataDate: (d) => {
+        if (!isValidIsoDate(d)) return; // 空欄・不正値は描画/CPM を壊すため無視
         set((s) => {
           s.project.dataDate = d;
           s.project.updatedAt = nowISO();
@@ -1242,6 +1231,7 @@ export const useApp = create<AppState>()(
         try {
           await flushPersistence();
           const doc = await getRepo().loadGraph(id);
+          await flushPersistence(); // 読込中の編集を旧プロジェクトへ吐き出してから差し替える
           setCurrentProjectId(id);
           get().loadDoc(doc, { persist: false });
           get().fit(200);
@@ -1255,6 +1245,7 @@ export const useApp = create<AppState>()(
         try {
           await flushPersistence();
           await enqueueWrite(() => getRepo().saveGraph(doc));
+          await flushPersistence();
           setCurrentProjectId(doc.project.id);
           get().loadDoc(doc, { persist: false });
           await get().refreshProjects();
@@ -1271,6 +1262,7 @@ export const useApp = create<AppState>()(
             cur.id,
             cur.name + "（複製）",
           );
+          await flushPersistence();
           setCurrentProjectId(dup.project.id);
           get().loadDoc(dup, { persist: false });
           await get().refreshProjects();
@@ -1285,6 +1277,16 @@ export const useApp = create<AppState>()(
         try {
           await flushPersistence();
           await getRepo().deleteProject(curId);
+          // 削除待ちの間の編集は書込先が無いので破棄する（保存エラーで切替が止まるのを防ぐ）。
+          if (saveTimer) {
+            clearTimeout(saveTimer);
+            saveTimer = null;
+          }
+          saveGeneration++;
+          set((s) => {
+            s.dirty = emptyDirty();
+            s.saveStatus = "saved";
+          });
           const list = await getRepo().listProjects();
           if (list.length) {
             await get().switchProject(list[0].id);

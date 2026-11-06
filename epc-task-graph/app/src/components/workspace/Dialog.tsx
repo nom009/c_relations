@@ -17,6 +17,8 @@ export function Dialog({
   useEffect(() => {
     const el = ref.current;
     el?.showModal();
+    // React の autoFocus は showModal 前（非表示中）に走って効かないため、開いた後に当てる。
+    el?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
     return () => el?.close();
   }, []);
   return (

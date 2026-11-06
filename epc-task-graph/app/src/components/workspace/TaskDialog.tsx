@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../../store/store";
-import { DISC_LABEL } from "../../domain/insights";
-import type { Discipline } from "../../domain";
+import { useAssigneeOptions } from "../../store/hooks";
+import { DISC_LABEL, type Discipline } from "../../domain";
 import { Dialog } from "./Dialog";
 import { Icon } from "./Icon";
 export function TaskDialog({
@@ -12,7 +12,8 @@ export function TaskDialog({
   onCreated: () => void;
 }) {
   const tasks = useApp((s) => s.tasks),
-    me = useApp((s) => s.me);
+    me = useApp((s) => s.me),
+    assigneeOptions = useAssigneeOptions();
   const [name, setName] = useState(""),
     [discipline, setDiscipline] = useState<Discipline>("E"),
     [days, setDays] = useState("5"),
@@ -56,7 +57,7 @@ export function TaskDialog({
           <label className="form-field">
             タスク名 <span className="required">必須</span>
             <input
-              autoFocus
+              data-autofocus
               required
               maxLength={160}
               placeholder="例：主要機器の仕様を確定する"
@@ -100,11 +101,9 @@ export function TaskDialog({
                 onChange={(e) => setAssignee(e.target.value)}
               />
               <datalist id="task-assignees">
-                {[...new Set(tasks.map((t) => t.assignee).filter(Boolean))].map(
-                  (a) => (
-                    <option key={a} value={a} />
-                  ),
-                )}
+                {assigneeOptions.map((a) => (
+                  <option key={a} value={a} />
+                ))}
               </datalist>
             </label>
             <label className="form-field">

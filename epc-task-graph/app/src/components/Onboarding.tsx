@@ -3,8 +3,9 @@
 // 初回のみ表示（localStorage フラグ）。自動テスト(navigator.webdriver)では出さない。
 // 担当を選ぶと自分のスライス（担当＋前後）で開く＝理想の運用スタイルに直行できる。
 // ============================================================================
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useApp } from '../store/store';
+import { useAssigneeOptions } from '../store/hooks';
 
 const LS_ONBOARDED = 'epc-app-onboarded';
 
@@ -17,13 +18,9 @@ export function Onboarding() {
       return true;
     }
   });
-  const tasks = useApp((s) => s.tasks);
   const me = useApp((s) => s.me);
   const [dept, setDept] = useState('');
-  const assignees = useMemo(
-    () => [...new Set(tasks.map((t) => t.assignee).filter(Boolean))].sort(),
-    [tasks],
-  );
+  const assignees = useAssigneeOptions();
 
   if (dismissed) return null;
 

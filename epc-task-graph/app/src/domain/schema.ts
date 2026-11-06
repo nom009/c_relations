@@ -4,6 +4,18 @@
 // ============================================================================
 import { z } from 'zod';
 
+// 所要日数・ラグの上限（約100年）。CPM の稼働日ループが暴走しないよう取込時に制限する。
+const MAX_DAYS = 36500;
+
+export function isValidIsoDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(s + 'T00:00:00Z');
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === s;
+}
+
+// 実在する暦日の 'YYYY-MM-DD'。不正な基準日はガント描画（toISOString）で例外になるため取込時に弾く。
+export const isoDateSchema = z.string().refine(isValidIsoDate, { message: 'invalid date' });
+
 export const disciplineSchema = z.enum(['E', 'P', 'C', 'OTHER']);
 export const statusSchema = z.enum(['NOT_STARTED', 'IN_PROGRESS', 'DONE', 'ON_HOLD']);
 export const constraintTypeSchema = z.enum(['ASAP', 'SNET', 'FNLT']);
@@ -18,12 +30,12 @@ export const taskSchema = z.object({
   wbsCode: z.string(),
   discipline: disciplineSchema,
   isMilestone: z.boolean(),
-  durationDays: z.number(),
+  durationDays: z.number().finite().min(0).max(MAX_DAYS),
   status: statusSchema,
   progress: z.number().int().min(0).max(100),
   assignee: z.string(),
   constraintType: constraintTypeSchema,
-  constraintDate: z.string().nullable(),
+  constraintDate: isoDateSchema.nullable(),
   notes: z.string(),
   position: positionSchema,
   rev: z.number().int(),
@@ -37,7 +49,7 @@ export const dependencySchema = z.object({
   predecessorId: z.string().min(1),
   successorId: z.string().min(1),
   type: dependencyTypeSchema,
-  lagDays: z.number(),
+  lagDays: z.number().finite().min(-MAX_DAYS).max(MAX_DAYS),
   rev: z.number().int(),
   updatedAt: z.string(),
   updatedBy: z.string(),
@@ -48,7 +60,7 @@ export const projectMetaSchema = z.object({
   name: z.string(),
   description: z.string(),
   calendarId: z.string(),
-  dataDate: z.string(),
+  dataDate: isoDateSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
   version: z.number().int(),
@@ -88,8 +100,8 @@ export const savedViewSchema = z.object({
 export const calendarSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
-  workingDays: z.array(z.number().int()),
-  holidays: z.array(z.string()),
+  workingDays: z.array(z.number().int().min(0).max(6)).min(1),
+  holidays: z.array(isoDateSchema),
 });
 
 export const graphDocSchema = z.object({

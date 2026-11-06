@@ -20,7 +20,6 @@ import {
   type IsValidConnection,
 } from '@xyflow/react';
 import {
-  deriveVisibleGraph,
   canConnect,
   naturalWbsCompare,
   DISC_COLOR,
@@ -30,8 +29,9 @@ import {
 import { toRFNodes, toRFEdges, type RFNodeData } from '../adapters/reactflow';
 import { dagreLayout } from '../layout/layout';
 import { useApp, explainReject, nameOf } from '../store/store';
-import { useCpm } from '../store/useCpm';
+import { useCpm, useVisibleGraph } from '../store/hooks';
 import { nodeTypes } from './nodes';
+import { isShortcutBlocked } from './keyboard';
 
 // 俯瞰グリッド整列（§2.10/デザイン刷新）: 表示がすべて集約ノード（＝WBS群の俯瞰）のとき、
 // LR依存チェーンだと横長になり fitView が極端に縮小→ノードが判読不能になる。WBS自然順で
@@ -39,6 +39,7 @@ import { nodeTypes } from './nodes';
 // なので座標を差し替えても実データ（タスク位置）に影響しない。タスクを含む表示は従来どおり。
 const OVR_CW = 208;
 const OVR_CH = 132;
+const DELETE_KEYS = ['Delete', 'Backspace'];
 function gridPackOverview(vnodes: VisibleNode[]): VisibleNode[] {
   if (vnodes.length < 2 || vnodes.length > 400) return vnodes;
   if (!vnodes.every((n) => n.kind === 'aggregate')) return vnodes;
@@ -48,6 +49,13 @@ function gridPackOverview(vnodes: VisibleNode[]): VisibleNode[] {
     ...n,
     position: { x: (i % cols) * OVR_CW, y: Math.floor(i / cols) * OVR_CH },
   }));
+}
+
+// 再生成で React Flow の選択フラグが消えると onSelectionChange({}) が走り、ストアの選択まで
+// 解除されるため、id が残る要素の選択状態を引き継ぐ。
+function keepSelected<T extends { id: string; selected?: boolean }>(prev: T[], next: T[]): T[] {
+  const sel = new Set(prev.filter((x) => x.selected).map((x) => x.id));
+  return sel.size ? next.map((x) => (sel.has(x.id) ? { ...x, selected: true } : x)) : next;
 }
 
 function FocusBar() {
@@ -133,27 +141,17 @@ function ConnectBar() {
 }
 
 export function CanvasArea() {
-  const tasks = useApp((s) => s.tasks);
-  const dependencies = useApp((s) => s.dependencies);
   const viewSpec = useApp((s) => s.viewSpec);
-  const cpHighlight = useApp((s) => s.cpHighlight);
   const connectMode = useApp((s) => s.connectMode);
+  // 非表示中（他ビュー表示時）に Delete で選択ノードが消えないよう、グラフ表示時だけ有効化。
+  const graphActive = useApp((s) => s.activeView === 'graph');
   const focus = viewSpec.focus;
   const rf = useReactFlow();
   const dragSrc = useRef<string | null>(null);
 
-  // CPM 導出値（メモ化・参照が変わった時だけ再計算、§9.2）。
+  // 表示パイプライン（CPM 注入済み・モジュールキャッシュで左パネルと共有、§2.6/§9.2）。
   const cpm = useCpm();
-  // 表示パイプラインへ CPM を注入した viewSpec（安定参照）。CP強調/CPのみ を統合。
-  const augSpec = useMemo(
-    () => ({ ...viewSpec, criticalTasks: cpm.criticalTasks, criticalEdges: cpm.criticalEdges, cpHighlight }),
-    [viewSpec, cpm, cpHighlight],
-  );
-
-  const derived = useMemo(
-    () => deriveVisibleGraph(tasks, dependencies, augSpec),
-    [tasks, dependencies, augSpec],
-  );
+  const derived = useVisibleGraph();
   const lastDerived = useRef(derived);
   lastDerived.current = derived;
 
@@ -179,8 +177,8 @@ export function CanvasArea() {
   const [nodes, setNodes] = useState<Node<RFNodeData>[]>(() => toRFNodes(displayNodes));
   const [edges, setEdges] = useState<Edge[]>(() => toRFEdges(derived.visibleEdges, energized));
   useEffect(() => {
-    setNodes(toRFNodes(displayNodes));
-    setEdges(toRFEdges(derived.visibleEdges, energized));
+    setNodes((prev) => keepSelected(prev, toRFNodes(displayNodes)));
+    setEdges((prev) => keepSelected(prev, toRFEdges(derived.visibleEdges, energized)));
   }, [derived, displayNodes, energized]);
 
   // フィルタ/前後/表示モードが変わったら、結果へ滑らかに自動フィット（余白に迷子にならない）。
@@ -333,9 +331,7 @@ export function CanvasArea() {
   // キーボード（§2.2）。インライン編集中は無効化。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if(document.querySelector('dialog[open]')) return;
-      const tag = ((e.target as HTMLElement).tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || (e.target as HTMLElement).isContentEditable) return;
+      if (isShortcutBlocked(e)) return;
       const s = useApp.getState();
       const meta = e.metaKey || e.ctrlKey;
       if (meta && e.key.toLowerCase() === 'z') {
@@ -432,7 +428,7 @@ export function CanvasArea() {
         snapToGrid
         snapGrid={[15, 15]}
         connectionRadius={30}
-        deleteKeyCode={['Delete', 'Backspace']}
+        deleteKeyCode={graphActive ? DELETE_KEYS : null}
         multiSelectionKeyCode={['Shift']}
         minZoom={0.05}
         maxZoom={2.5}

@@ -62,4 +62,33 @@ describe('validate: §5.2 バリデーション①〜⑦', () => {
     const res = validateDoc({ schemaVersion: 1 });
     expect(res.ok).toBe(false);
   });
+
+  it('Zod: 稼働曜日が空/範囲外、所要日数が巨大なドキュメントを弾く', () => {
+    const empty: any = emptyDoc();
+    empty.calendars[0].workingDays = [];
+    expect(validateDoc(empty).ok).toBe(false);
+    const outOfRange: any = emptyDoc();
+    outOfRange.calendars[0].workingDays = [7];
+    expect(validateDoc(outOfRange).ok).toBe(false);
+    const huge: any = emptyDoc();
+    huge.tasks = [makeTask({ name: 'x', durationDays: 1e9 })];
+    expect(validateDoc(huge).ok).toBe(false);
+  });
+
+  it('Zod: 実在しない基準日・休日・制約日を弾く', () => {
+    for (const bad of ['', 'abc', '2026-13-01', '2026-02-30']) {
+      const d: any = emptyDoc();
+      d.project.dataDate = bad;
+      expect(validateDoc(d).ok).toBe(false);
+    }
+    const hol: any = emptyDoc();
+    hol.calendars[0].holidays = ['2026-02-30'];
+    expect(validateDoc(hol).ok).toBe(false);
+    const con: any = emptyDoc();
+    con.tasks = [makeTask({ name: 'x', constraintType: 'SNET', constraintDate: '2026-1-5' })];
+    expect(validateDoc(con).ok).toBe(false);
+    const ok: any = emptyDoc();
+    ok.project.dataDate = '2024-02-29';
+    expect(validateDoc(ok).ok).toBe(true);
+  });
 });

@@ -4,9 +4,14 @@
 // 1操作=1 Undo単位（bulkUpdateTasks は1回の set()）。§7.4の直接setState禁止に従う。
 // ============================================================================
 import { useState } from 'react';
-import { DISCIPLINES, STATUSES, type Discipline, type Status } from '../../domain';
+import {
+  DISCIPLINES,
+  STATUSES,
+  STATUS_LABEL,
+  type Discipline,
+  type Status,
+} from '../../domain';
 import { useApp } from '../../store/store';
-import { STATUS_LABEL } from './cells';
 
 export function BulkBar({ ids, assigneeOptions }: { ids: string[]; assigneeOptions: string[] }) {
   const [assignee, setAssignee] = useState('');

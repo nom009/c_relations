@@ -1,14 +1,15 @@
-import { DISC_LABEL, STATUS_LABEL } from "../domain/insights";
 // 左パネル（§2.8）: 私は誰・組込みビュー・フィルタ（DIM/ISOLATE）・展開レベル・稼働カレンダー・統計・凡例。
 import { useMemo, useState } from "react";
 import { useApp, selectActiveCalendar } from "../store/store";
-import { useCpm } from "../store/useCpm";
+import { useAssigneeOptions, useVisibleGraph } from "../store/hooks";
 import {
-  deriveVisibleGraph,
   naturalWbsCompare,
+  isValidIsoDate,
   DISCIPLINES,
   STATUSES,
   DISC_COLOR,
+  DISC_LABEL,
+  STATUS_LABEL,
   type GraphFilter,
   type Task,
 } from "../domain";
@@ -233,7 +234,7 @@ function CalendarEditor() {
             const hs = e.target.value
               .split(/[\s,]+/)
               .map((x) => x.trim())
-              .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x));
+              .filter(isValidIsoDate);
             useApp.getState().updateCalendar({ holidays: hs });
           }}
         />
@@ -249,28 +250,12 @@ export function LeftPanel() {
   const displayMode = useApp((s) => s.viewSpec.displayMode);
   const expandLevel = useApp((s) => s.expandLevel);
   const me = useApp((s) => s.me);
-  const tasks = useApp((s) => s.tasks);
-  const dependencies = useApp((s) => s.dependencies);
   const viewSpec = useApp((s) => s.viewSpec);
-  const cpHighlight = useApp((s) => s.cpHighlight);
   // 詳細設定（私は誰/表示モード/展開/検索/カレンダー/統計/凡例）は既定で折り畳む（§大胆に隠す）。
   const [showDetails, setShowDetails] = useState(false);
 
-  const cpm = useCpm();
-  const stats = useMemo(
-    () =>
-      deriveVisibleGraph(tasks, dependencies, {
-        ...viewSpec,
-        criticalTasks: cpm.criticalTasks,
-        criticalEdges: cpm.criticalEdges,
-        cpHighlight,
-      }).stats,
-    [tasks, dependencies, viewSpec, cpm, cpHighlight],
-  );
-  const assignees = useMemo(
-    () => [...new Set(tasks.map((t) => t.assignee).filter(Boolean))].sort(),
-    [tasks],
-  );
+  const { stats } = useVisibleGraph();
+  const assignees = useAssigneeOptions();
 
   const chip = (key: ArrayFilterKey, val: string, label: string) => (
     <button

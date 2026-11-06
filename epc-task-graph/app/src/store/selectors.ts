@@ -1,14 +1,15 @@
 // ============================================================================
-// メモ化セレクタ（§9.1-9.2, §5.1）: CpmResult を tasks/deps/dataDate の「参照が
-// 変わった時だけ」再計算する。CPM 結果は非永続の導出値（DBに焼かない）。
-// CP強調・criticalOnly フィルタ・完了日サマリ・右パネルTF はすべてこの1つの結果を参照。
+// 導出値セレクタ（§9.1-9.2, §5.1/§12.3.1）: 入力の「参照」が変わった時だけ再計算する。
+// immer は変更時のみ参照を差し替えるため、全コンポーネントで同じ入力参照＝キャッシュが共有される。
+// CPM 結果・テーブル行は非永続の導出値（DBに焼かない）。
 // ============================================================================
 import {
   computeCpm,
   deriveTableRows,
+  deriveVisibleGraph,
   type Calendar,
   type CpmResult,
-  type CpmTaskResult,
+  type DeriveResult,
   type Dependency,
   type Task,
   type TableResult,
@@ -16,88 +17,59 @@ import {
   type ViewSpec,
 } from '../domain';
 
-interface CpmCache {
-  tasks: Task[] | null;
-  deps: Dependency[] | null;
-  dataDate: string | null;
-  calendar: Calendar | null;
-  result: CpmResult | null;
+// 直前1回分の引数（参照比較）と結果を保持するメモ化。
+function memoizeLast<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  let lastArgs: A | null = null;
+  let lastResult!: R;
+  return (...args: A): R => {
+    const prev = lastArgs;
+    if (prev && prev.length === args.length && args.every((a, i) => a === prev[i])) return lastResult;
+    lastResult = fn(...args);
+    lastArgs = args;
+    return lastResult;
+  };
 }
 
-const cache: CpmCache = { tasks: null, deps: null, dataDate: null, calendar: null, result: null };
-
-// tasks/deps の配列参照（immer が変更時のみ差し替える）・dataDate・稼働カレンダー参照で判定。
-export function selectCpm(
+export const selectCpm: (
   tasks: Task[],
   deps: Dependency[],
   dataDate: string,
-  calendar?: Calendar | null,
-): CpmResult {
-  const cal = calendar ?? null;
-  if (
-    cache.result &&
-    cache.tasks === tasks &&
-    cache.deps === deps &&
-    cache.dataDate === dataDate &&
-    cache.calendar === cal
-  ) {
-    return cache.result;
-  }
-  const result = computeCpm(tasks, deps, dataDate, cal);
-  cache.tasks = tasks;
-  cache.deps = deps;
-  cache.dataDate = dataDate;
-  cache.calendar = cal;
-  cache.result = result;
-  return result;
-}
+  calendar: Calendar | null,
+) => CpmResult = memoizeLast(computeCpm);
 
-// ============================================================================
-// テーブル行のメモ化セレクタ（§12.3.1 メモ化）: selectCpm と同型のモジュールキャッシュ。
-// キーは tasks/deps/viewSpec/sort/cpm の「参照」。immer が変更時のみ参照を差し替えるため
-// 成立する（selectCpm と同じ根拠）。cpm は selectCpm().byTask を渡す。
-// ============================================================================
-interface TableRowsCache {
-  tasks: Task[] | null;
-  deps: Dependency[] | null;
-  viewSpec: Partial<ViewSpec> | null;
-  sort: TableSort[] | null;
-  cpm: Map<string, CpmTaskResult> | null;
-  result: TableResult | null;
-}
+// キャンバスと左パネル統計が同じ表示グラフを共有する（CPM を注入した viewSpec で導出）。
+export const selectVisibleGraph = memoizeLast(
+  (
+    tasks: Task[],
+    deps: Dependency[],
+    viewSpec: ViewSpec,
+    cpHighlight: boolean,
+    cpm: CpmResult,
+  ): DeriveResult =>
+    deriveVisibleGraph(tasks, deps, {
+      ...viewSpec,
+      criticalTasks: cpm.criticalTasks,
+      criticalEdges: cpm.criticalEdges,
+      cpHighlight,
+    }),
+);
 
-const tableCache: TableRowsCache = {
-  tasks: null,
-  deps: null,
-  viewSpec: null,
-  sort: null,
-  cpm: null,
-  result: null,
-};
+// テーブルとガントが同じ行集合を共有する（両ビューが同一引数で呼ぶのでキャッシュが当たる）。
+export const selectTableRows = memoizeLast(
+  (
+    tasks: Task[],
+    deps: Dependency[],
+    viewSpec: ViewSpec,
+    sort: TableSort[],
+    cpm: CpmResult,
+  ): TableResult =>
+    deriveTableRows(tasks, deps, { ...viewSpec, criticalTasks: cpm.criticalTasks }, sort, cpm.byTask),
+);
 
-export function selectTableRows(
-  tasks: Task[],
-  deps: Dependency[],
-  viewSpec: Partial<ViewSpec>,
-  sort: TableSort[],
-  cpm: Map<string, CpmTaskResult> | null,
-): TableResult {
-  if (
-    tableCache.result &&
-    tableCache.tasks === tasks &&
-    tableCache.deps === deps &&
-    tableCache.viewSpec === viewSpec &&
-    tableCache.sort === sort &&
-    tableCache.cpm === cpm
-  ) {
-    return tableCache.result;
-  }
-  const result = deriveTableRows(tasks, deps, viewSpec, sort, cpm);
-  tableCache.tasks = tasks;
-  tableCache.deps = deps;
-  tableCache.viewSpec = viewSpec;
-  tableCache.sort = sort;
-  tableCache.cpm = cpm;
-  tableCache.result = result;
-  return result;
-}
+export const selectTaskIndex = memoizeLast(
+  (tasks: Task[]): Map<string, Task> => new Map(tasks.map((t) => [t.id, t])),
+);
+
+export const selectAssigneeOptions = memoizeLast((tasks: Task[]): string[] =>
+  [...new Set(tasks.map((t) => t.assignee).filter(Boolean))].sort(),
+);

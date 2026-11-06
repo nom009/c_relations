@@ -1,4 +1,3 @@
-import { STATUS_LABEL } from "../domain/insights";
 import { Icon } from "./workspace/Icon";
 // ============================================================================
 // View Shell（§12.2）: グラフ/テーブル/ガント(disabled) のタブ＋器。
@@ -8,8 +7,13 @@ import { Icon } from "./workspace/Icon";
 // ============================================================================
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../store/store";
-import { isFilterActive, matchesFilter, type ActiveView } from "../domain";
-import { useCpm } from "../store/useCpm";
+import {
+  isFilterActive,
+  matchesFilter,
+  STATUS_LABEL,
+  type ActiveView,
+} from "../domain";
+import { useCpm } from "../store/hooks";
 import { CanvasArea } from "./CanvasArea";
 import { TableView } from "./table/TableView";
 import { GanttView } from "./gantt/GanttView";
@@ -230,36 +234,7 @@ export function ViewShell() {
     if (s.selection.taskId) s.revealTask(s.selection.taskId);
   }, [activeView]);
 
-  // ビュー切替ショートカット（§12.6 PR-T2）: g=グラフ / t=テーブル。全ビュー共通。
-  // g/t はグラフ・テーブルどちらのキー処理でも未使用なので衝突しない。
-  // 編集中（input/textarea/select/contentEditable）と修飾キー併用時は無効。
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (document.querySelector("dialog[open]")) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const el = e.target as HTMLElement;
-      const tag = (el.tagName || "").toLowerCase();
-      if (
-        tag === "input" ||
-        tag === "textarea" ||
-        tag === "select" ||
-        el.isContentEditable
-      )
-        return;
-      if (e.key === "g" || e.key === "G") {
-        e.preventDefault();
-        useApp.getState().setActiveView("graph");
-      } else if (e.key === "t" || e.key === "T") {
-        e.preventDefault();
-        useApp.getState().setActiveView("table");
-      } else if (e.key === "y" || e.key === "Y") {
-        e.preventDefault();
-        useApp.getState().setActiveView("gantt");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  // ビュー切替ショートカット（G/T/Y）は App のグローバルキー処理が一元的に扱う。
 
   return (
     <div className="viewshell">

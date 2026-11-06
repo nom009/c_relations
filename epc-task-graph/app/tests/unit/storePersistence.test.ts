@@ -46,6 +46,16 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 describe("Persistence across product workflows", () => {
+  it("deleting a task also persists the deletion of its dependencies", async () => {
+    const a = useApp.getState().addTask({ name: "a" });
+    const b = useApp.getState().addTask({ name: "b" });
+    expect(useApp.getState().addDependencyChecked(a.id, b.id)).toBe(true);
+    const depId = useApp.getState().dependencies[0].id;
+    await flushPersistence();
+    useApp.getState().deleteTasks([a.id]);
+    await flushPersistence();
+    expect(mocks.patch.mock.lastCall![1].deletedDeps).toContain(depId);
+  });
   it("undoing an unsaved deletion restores the task in the persisted patch", async () => {
     const t = useApp.getState().addTask({ name: "kept" });
     await flushPersistence();
@@ -67,6 +77,18 @@ describe("Persistence across product workflows", () => {
     await flushPersistence();
     expect(mocks.patch.mock.lastCall![1].tasks).toContain(t.id);
     expect(mocks.patch.mock.lastCall![1].deletedTasks).not.toContain(t.id);
+  });
+  it("undo marks only the rows that actually changed as dirty", async () => {
+    const a = useApp.getState().addTask({ name: "a" });
+    const b = useApp.getState().addTask({ name: "b" });
+    await flushPersistence();
+    useApp.getState().updateTask(a.id, { name: "a2" });
+    await flushPersistence();
+    useApp.getState().undo();
+    await flushPersistence();
+    const dirty = mocks.patch.mock.lastCall![1];
+    expect(dirty.tasks).toEqual([a.id]);
+    expect(dirty.tasks).not.toContain(b.id);
   });
   it("retains an edit to the same task made while saving", async () => {
     let finish!: (value: { ok: boolean }) => void;
@@ -184,5 +206,19 @@ describe("Persistence across product workflows", () => {
     useApp.getState().loadDoc(doc, { persist: false });
     useApp.getState().bulkUpdateTasks([t.id], { status: "DONE" });
     expect(useApp.getState().tasks[0].progress).toBe(100);
+  });
+  it("does not create dependencies to deleted tasks and clears a stale connect source", () => {
+    const a = makeTask({ name: "a" }),
+      b = makeTask({ name: "b" }),
+      doc = emptyDoc();
+    doc.tasks = [a, b];
+    useApp.getState().loadDoc(doc, { persist: false });
+    useApp.getState().toggleConnectMode();
+    useApp.getState().connectClick(a.id);
+    expect(useApp.getState().connectSource).toBe(a.id);
+    useApp.getState().deleteTasks([a.id]);
+    expect(useApp.getState().connectSource).toBeNull();
+    expect(useApp.getState().addDependencyChecked(a.id, b.id)).toBe(false);
+    expect(useApp.getState().dependencies).toHaveLength(0);
   });
 });

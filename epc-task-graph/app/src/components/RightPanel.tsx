@@ -1,14 +1,17 @@
 import { useMemo, useState } from "react";
 import { useApp, selectActiveCalendar } from "../store/store";
-import { useCpm } from "../store/useCpm";
+import { useAssigneeOptions, useCpm, useSelectedTask } from "../store/hooks";
+import { selectTaskIndex } from "../store/selectors";
 import {
   computeCpm,
   DISCIPLINES,
   STATUSES,
+  DISC_LABEL,
+  STATUS_LABEL,
   type Dependency,
   type Task,
 } from "../domain";
-import { DISC_LABEL, STATUS_LABEL, shortDate } from "../domain/insights";
+import { shortDate } from "../domain/insights";
 import { Icon } from "./workspace/Icon";
 import { Dialog } from "./workspace/Dialog";
 
@@ -69,6 +72,68 @@ function DepAdder({
     </div>
   );
 }
+// 打鍵ごとに更新すると 1 文字ごとに履歴・保存・CPM 再計算（WBS ならツリー再構築）が走るため、
+// 入力中は下書きに留めて blur/Enter で確定する（Esc で破棄）。Undo 等の外部変更は下書きへ反映する。
+function DraftField({
+  value,
+  onCommit,
+  accept,
+  multiline,
+  rows,
+  list,
+  type,
+  ...attrs
+}: {
+  value: string;
+  onCommit: (v: string) => void;
+  accept?: (v: string) => boolean;
+  multiline?: boolean;
+  rows?: number;
+  list?: string;
+  className?: string;
+  type?: "text" | "number";
+  placeholder?: string;
+  maxLength?: number;
+  "aria-label"?: string;
+}) {
+  const [draft, setDraft] = useState(value),
+    [base, setBase] = useState(value);
+  if (base !== value) {
+    setBase(value);
+    setDraft(value);
+  }
+  const commit = () => {
+    if (draft === value) return;
+    if (accept && !accept(draft)) setDraft(value);
+    else onCommit(draft);
+  };
+  const common = {
+    ...attrs,
+    value: draft,
+    onBlur: commit,
+  };
+  return multiline ? (
+    <textarea
+      {...common}
+      rows={rows}
+      onChange={(e) => setDraft(e.target.value)}
+    />
+  ) : (
+    <input
+      {...common}
+      type={type}
+      list={list}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        else if (e.key === "Escape") setDraft(value);
+      }}
+    />
+  );
+}
+const isLagDays = (v: string) =>
+  /^-?\d+$/.test(v) && Math.abs(Number(v)) <= 36500;
+
 function DurationEditor({ task }: { task: Task }) {
   const tasks = useApp((s) => s.tasks),
     deps = useApp((s) => s.dependencies),
@@ -163,10 +228,11 @@ function DurationEditor({ task }: { task: Task }) {
   );
 }
 export function RightPanel() {
-  const task = useApp((s) => s.tasks.find((t) => t.id === s.selection.taskId)),
+  const task = useSelectedTask(),
     tasks = useApp((s) => s.tasks),
     deps = useApp((s) => s.dependencies),
-    cpm = useCpm();
+    cpm = useCpm(),
+    assigneeOptions = useAssigneeOptions();
   const [tab, setTab] = useState<"details" | "relations" | "schedule">(
       "details",
     ),
@@ -176,7 +242,7 @@ export function RightPanel() {
       useApp.getState().updateTask(task.id, patch),
     preds = deps.filter((d) => d.successorId === task.id),
     succs = deps.filter((d) => d.predecessorId === task.id),
-    byId = new Map(tasks.map((t) => [t.id, t])),
+    byId = selectTaskIndex(tasks),
     schedule = cpm.byTask.get(task.id);
   const depItem = (d: Dependency, otherId: string) => (
     <div className="relation-item" key={d.id}>
@@ -210,16 +276,15 @@ export function RightPanel() {
         </select>
         <label>
           間隔
-          <input
+          <DraftField
             className="deplag"
             aria-label="ラグ日数"
             type="number"
-            value={d.lagDays}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              if (Number.isFinite(n))
-                useApp.getState().updateDep(d.id, { lagDays: n });
-            }}
+            value={String(d.lagDays)}
+            accept={isLagDays}
+            onCommit={(v) =>
+              useApp.getState().updateDep(d.id, { lagDays: Number(v) })
+            }
           />
           日
         </label>
@@ -287,10 +352,10 @@ export function RightPanel() {
           <>
             <label className="form-field">
               タスク名
-              <input
+              <DraftField
                 value={task.name}
                 maxLength={160}
-                onChange={(e) => upd({ name: e.target.value })}
+                onCommit={(v) => upd({ name: v })}
               />
             </label>
             <div className="form-grid">
@@ -345,25 +410,23 @@ export function RightPanel() {
             />
             <label className="form-field">
               担当部署
-              <input
+              <DraftField
                 value={task.assignee}
-                onChange={(e) => upd({ assignee: e.target.value })}
+                onCommit={(v) => upd({ assignee: v })}
                 placeholder="担当を設定"
                 list="inspector-assignees"
               />
               <datalist id="inspector-assignees">
-                {[...new Set(tasks.map((t) => t.assignee).filter(Boolean))].map(
-                  (a) => (
-                    <option key={a} value={a} />
-                  ),
-                )}
+                {assigneeOptions.map((a) => (
+                  <option key={a} value={a} />
+                ))}
               </datalist>
             </label>
             <label className="form-field">
               WBSコード
-              <input
+              <DraftField
                 value={task.wbsCode}
-                onChange={(e) => upd({ wbsCode: e.target.value })}
+                onCommit={(v) => upd({ wbsCode: v.trim() })}
                 placeholder="例：1.1"
               />
             </label>
@@ -382,10 +445,11 @@ export function RightPanel() {
             </label>
             <label className="form-field">
               メモ
-              <textarea
+              <DraftField
+                multiline
                 rows={4}
                 value={task.notes}
-                onChange={(e) => upd({ notes: e.target.value })}
+                onCommit={(v) => upd({ notes: v })}
                 placeholder="確認事項や、次に取るアクションを記録"
               />
             </label>

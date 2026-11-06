@@ -55,8 +55,8 @@ export function findCyclePath(
   const prevOf = new Map<string, string>(); // 子 → 親（BFS木）
   const q: string[] = [targetId];
   const seen = new Set<string>([targetId]);
-  while (q.length) {
-    const cur = q.shift()!; // FIFO＝最短ホップ順に展開
+  for (let qi = 0; qi < q.length; qi++) {
+    const cur = q[qi]; // FIFO＝最短ホップ順に展開（shift() の O(n) を避け読み出し位置を進める）
     if (cur === sourceId) {
       // prevOf を source→…→target と逆に辿り直して経路を復元（表示用）。
       const path: string[] = [];
@@ -114,8 +114,8 @@ export function topoSort(tasks: Task[], deps: Dependency[]): TopoResult {
   for (const [id, dg] of indeg) if (dg === 0) q.push(id);
   const order: string[] = [];
   // キューから取り出す度に後続の入次数を1減らし、0になったら順序が確定＝キューへ。
-  while (q.length) {
-    const cur = q.shift()!;
+  for (let qi = 0; qi < q.length; qi++) {
+    const cur = q[qi];
     order.push(cur);
     const ss = succ.get(cur);
     if (!ss) continue;
