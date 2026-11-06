@@ -127,7 +127,7 @@ describe('deriveVisibleGraph: 関係ハイライト（focus mode=highlight・§2
       deps,
       spec({
         focus: { taskId: near[2].id, up: 1, down: 1, mode: 'highlight' },
-        collapsedWbs: collapsedForLevel(tasks, 2), // 別WBSは畳まれた状態
+        collapsedWbs: collapsedForLevel(tasks, 1), // 別WBS(2)は畳まれた状態（近傍の 1 は自動展開）
       }),
     );
     // 非近傍（別WBS 2.1）は隠れず、集約ノードとして文脈に残る。
