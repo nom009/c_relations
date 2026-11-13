@@ -21,6 +21,7 @@ import type {
 } from './apiContract';
 import type { GraphPatch, GraphRepository, PatchResult, SnapshotMeta } from './GraphRepository';
 import { API_BASE } from './mode';
+import { retryWhileWaking } from './coldStart';
 
 export class AuthRequiredError extends Error {
   constructor() {
@@ -115,6 +116,7 @@ function throwForStatus({ status, body }: RawResponse): never {
   if (status === 401) throw new AuthRequiredError();
   if (status === 403) throw new ForbiddenError(err?.message);
   if (status === 404) throw new NotFoundError(err?.message);
+  if (status === 413) throw new ServerValidationError(message, [message]);
   if (status === 422) throw new ServerValidationError(message, err?.details?.length ? err.details : [message]);
   throw new ApiUnavailableError(message, status);
 }
@@ -126,6 +128,14 @@ async function call<T>(method: string, path: string, payload?: unknown): Promise
 }
 
 const pid = (id: string) => encodeURIComponent(id);
+
+// サーバーが応答した上での 5xx = DB 再開待ちなど「待てば直る」状態（接続不能は含めない）。
+export const isServerWaking = (e: unknown): boolean =>
+  e instanceof ApiUnavailableError && e.status !== null && e.status >= 500;
+
+// 初回読込など、待つ価値のある読み取り用。
+const callWhenWaking = <T>(method: string, path: string): Promise<T> =>
+  retryWhileWaking(() => call<T>(method, path), isServerWaking);
 
 // 移行→修復だけを防御的に行う（サーバーが検証済み。スナップショット等の副作用なし）。
 function normalizeDoc(raw: GraphDoc): GraphDoc {
@@ -145,7 +155,7 @@ export class ApiRepository implements GraphRepository {
   }
 
   async listProjects(): Promise<ProjectSummary[]> {
-    const list = await call<ProjectSummary[]>('GET', '/projects');
+    const list = await callWhenWaking<ProjectSummary[]>('GET', '/projects');
     for (const p of list) this.roles.set(p.id, p.role);
     return list;
   }
@@ -157,7 +167,7 @@ export class ApiRepository implements GraphRepository {
   }
 
   async loadGraph(projectId: string): Promise<GraphDoc> {
-    return this.adopt(await call<GraphResponse>('GET', `/projects/${pid(projectId)}/graph`));
+    return this.adopt(await callWhenWaking<GraphResponse>('GET', `/projects/${pid(projectId)}/graph`));
   }
 
   async savePatch(patch: GraphPatch): Promise<PatchResult> {

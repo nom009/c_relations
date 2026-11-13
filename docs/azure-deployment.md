@@ -17,7 +17,8 @@ GitHub Pages 版（ブラウザ内保存・1人用）はそのまま残ります
 | リソース | プラン | 目安 |
 |---|---|---|
 | Static Web Apps | Standard（テナント限定ログインに必須） | 約 $9/月 |
-| Azure SQL Database | サーバーレス＋無料枠（月10万vCore秒） | 小規模なら $0（超過時は自動一時停止） |
+| Azure SQL Database | サーバーレス＋無料枠（月10万vCore秒） | 小規模なら $0。無料枠を超えた分は従量課金で継続（既定。月額予算アラートで検知） |
+| Application Insights | ログ保持30日 | 小規模なら無料枠内 |
 
 ## 手順（初回のみ）
 
@@ -42,13 +43,26 @@ az deployment group create -g rg-c-relations \
   --template-file epc-task-graph/infra/main.bicep \
   --parameters sqlAdminLogin=crelationsadmin \
                sqlAdminPassword='<十分に長いパスワード>' \
+               sqlAppPassword='<アプリ専用ユーザーのパスワード（管理者とは別）>' \
                aadClientId='<クライアントID>' \
-               aadClientSecret='<シークレット値>'
+               aadClientSecret='<シークレット値>' \
+               alertEmails='["you@example.com"]' \
+               monthlyBudget=30
 ```
+
+- `alertEmails` を指定すると、API の死活監視・5xx 多発のアラートと、月額予算（80%/100%）の通知が有効になります（省略可。省略時はアラート/予算なし）。
+- `sqlFreeLimitExhaustion=AutoPause` を付けると、無料枠を使い切った時に課金せず月末まで DB を停止します（その間サーバー版は使えません）。既定の `BillOverUsage` は課金して継続します。
 
 （リポジトリを Cloud Shell に clone するか、`main.bicep` をアップロードして実行）
 
 出力の `loginRedirectUri` と `staticWebAppName` を控えます。
+
+### 2b. アプリ専用の DB ユーザーを作成
+
+API は管理者ではなく最小権限のユーザー（`crelations_app`）で DB に接続します。作成しないと API が DB に接続できません。
+
+1. Azure ポータル → SQL データベース（`<prefix>-db`）→ クエリ エディターに管理者（`sqlAdminLogin`）でログイン（初回はクライアント IP の許可を求められるので許可）
+2. `epc-task-graph/infra/sql/create-app-user.sql` の `<APP_PASSWORD>` を `sqlAppPassword` と同じ値に置き換えて実行
 
 ### 3. リダイレクト URI を登録
 
@@ -80,6 +94,9 @@ API は `npm run package:deploy` で `epc-task-graph/api-deploy/` に組み立�
 
 ## 運用メモ
 
+- DB の自動停止: 60 分アクセスが無いと一時停止し、次のアクセスで再開します（最大 1 分）。API は再開を待って接続を再試行し、画面には「サーバーを起動しています…」と表示されます。
+- 監視: Application Insights（Azure ポータル → `<prefix>-ai-…` → 障害 / ログ）。`alertEmails` 指定時は死活監視と 5xx アラートが届きます。
+- リクエスト本文の上限は 20MB（超えると 413）。
 - DB のバックアップ: Azure SQL の自動バックアップ（ポイントインタイムリストア 7日）。アプリ内の保存履歴とは別。
 - シークレットの更新: アプリ登録のシークレット期限前に新しい値を SWA のアプリ設定 `AAD_CLIENT_SECRET` に設定。
 - テーブルは API の初回アクセス時に自動作成されます（`epc-task-graph/api/sql/schema.sql` と同じ定義）。

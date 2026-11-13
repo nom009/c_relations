@@ -2,6 +2,7 @@ import * as mssqlNs from 'mssql';
 import type { Calendar, Dependency, SavedView, Task, ViewState } from '../domain';
 import type { ProjectRole, SnapshotMeta } from '../contract';
 import { DuplicateKeyError } from '../errors';
+import { retryTransient, sqlErrNumber } from './retry';
 import { SCHEMA_STATEMENTS } from './schema';
 import type {
   ChangedRows,
@@ -33,6 +34,7 @@ const T_TEXT = mssql.NVarChar(mssql.MAX);
 const T_INT = mssql.Int;
 
 // SQL Server のパラメータ上限は 2100。チャンクごとに十分余裕を持たせる。
+const REQUEST_TIMEOUT_MS = 30_000;
 const PUT_CHUNK = 200; // 1 行 3 パラメータ
 const ID_CHUNK = 500;
 
@@ -43,12 +45,6 @@ function chunks<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
-}
-
-function sqlErrNumber(e: unknown): number | undefined {
-  const x = e as { number?: unknown; originalError?: { number?: unknown; info?: { number?: unknown } } } | null;
-  const n = x?.number ?? x?.originalError?.number ?? x?.originalError?.info?.number;
-  return typeof n === 'number' ? n : undefined;
 }
 
 interface ProjectSqlRow {
@@ -118,21 +114,28 @@ export class SqlStore implements ServerStore {
 
   private getPool(): Promise<mssqlNs.ConnectionPool> {
     if (!this.poolPromise) {
-      const pp = (async () => {
+      const pp = retryTransient(async () => {
         const pool = new mssql.ConnectionPool(this.connectionString);
+        // 既定 15 秒だと再開直後の初回クエリが切れる。接続文字列に明示が無ければ延ばす。
+        if (!/request\s*timeout/i.test(this.connectionString)) pool.config.requestTimeout = REQUEST_TIMEOUT_MS;
         pool.on('error', (e: unknown) => console.error('[sql] pool error', e));
-        await pool.connect();
-        for (const stmt of SCHEMA_STATEMENTS) {
-          try {
-            await pool.request().batch(stmt);
-          } catch (e) {
-            // 並行コールドスタートでの作成競合（既存オブジェクト）は無視。
-            const n = sqlErrNumber(e);
-            if (n !== 2714 && n !== 1913 && n !== 2705) throw e;
+        try {
+          await pool.connect();
+          for (const stmt of SCHEMA_STATEMENTS) {
+            try {
+              await pool.request().batch(stmt);
+            } catch (e) {
+              // 並行コールドスタートでの作成競合（既存オブジェクト）は無視。
+              const n = sqlErrNumber(e);
+              if (n !== 2714 && n !== 1913 && n !== 2705) throw e;
+            }
           }
+        } catch (e) {
+          await pool.close().catch(() => undefined);
+          throw e;
         }
         return pool;
-      })();
+      });
       pp.catch(() => {
         if (this.poolPromise === pp) this.poolPromise = null; // 次回呼び出しで再接続
       });

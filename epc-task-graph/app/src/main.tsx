@@ -29,8 +29,10 @@ async function start() {
   clearTimeout(overlayTimer);
   // サーバー版のみ: 同期層を読み込み、ログイン確認（未ログインならログイン画面へ遷移してエディタは出さない）。
   let startSync: (() => void) | null = null;
+  let setWakeListener: ((fn: (() => void) | null) => void) | null = null;
   if (API_MODE) {
     const sync = await import("./store/apiSync");
+    ({ setServerWakingListener: setWakeListener } = await import("./storage/coldStart"));
     try {
       if (!(await sync.initApiSession())) return;
     } catch {
@@ -46,8 +48,21 @@ async function start() {
       return;
     }
     startSync = sync.startApiSync;
+    // 初回読込中にサーバー（DB）の起動待ちが発生したら、その旨を表示する。
+    setWakeListener?.(() =>
+      root.render(
+        <div className="app-loading" role="status">
+          <span>C-Relations</span>
+          <p>サーバーを起動しています…（しばらく使っていない場合は 1 分ほどかかります）</p>
+        </div>,
+      ),
+    );
   }
-  await bootstrapStore();
+  try {
+    await bootstrapStore();
+  } finally {
+    setWakeListener?.(null);
+  }
   startSync?.();
   // タブを隠す/閉じる時点でデバウンス待ちの差分を即書き出す（閉じた直後の編集を失わない）。
   const flushNow = () => {

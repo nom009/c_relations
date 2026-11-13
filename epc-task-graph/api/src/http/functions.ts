@@ -2,10 +2,13 @@ import { app } from '@azure/functions';
 import type { HttpRequest, HttpResponseInit } from '@azure/functions';
 import { PRINCIPAL_HEADER } from '../auth/principal';
 import { getStore } from '../store';
+import { PAYLOAD_TOO_LARGE_BODY, isBodyTooLarge } from './bodyLimit';
 import { ROUTES, handle } from './router';
 
-async function readBody(req: HttpRequest): Promise<{ ok: true; body: unknown } | { ok: false }> {
+async function readBody(req: HttpRequest): Promise<{ ok: true; body: unknown } | { ok: false; tooLarge?: boolean }> {
+  if (isBodyTooLarge(req.headers.get('content-length'))) return { ok: false, tooLarge: true };
   const text = await req.text();
+  if (isBodyTooLarge(null, text)) return { ok: false, tooLarge: true };
   if (!text.trim()) return { ok: true, body: undefined };
   try {
     return { ok: true, body: JSON.parse(text) as unknown };
@@ -20,6 +23,7 @@ async function handler(req: HttpRequest): Promise<HttpResponseInit> {
   if (hasBody) {
     const r = await readBody(req);
     if (!r.ok) {
+      if (r.tooLarge) return { status: 413, jsonBody: PAYLOAD_TOO_LARGE_BODY, headers: { 'cache-control': 'no-store' } };
       return {
         status: 400,
         jsonBody: { error: { code: 'bad_request', message: 'JSON の形式が不正です' } },
