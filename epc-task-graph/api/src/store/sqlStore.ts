@@ -116,8 +116,9 @@ export class SqlStore implements ServerStore {
     if (!this.poolPromise) {
       const pp = retryTransient(async () => {
         const pool = new mssql.ConnectionPool(this.connectionString);
-        // 既定 15 秒だと再開直後の初回クエリが切れる。接続文字列に明示が無ければ延ばす。
-        if (!/request\s*timeout/i.test(this.connectionString)) pool.config.requestTimeout = REQUEST_TIMEOUT_MS;
+        // 既定 15 秒だと再開直後の初回クエリが切れる。接続文字列に明示が無ければ延ばす（型定義に無い内部設定）。
+        const cfg = (pool as unknown as { config?: { requestTimeout?: number } }).config;
+        if (cfg && !/request\s*timeout/i.test(this.connectionString)) cfg.requestTimeout = REQUEST_TIMEOUT_MS;
         pool.on('error', (e: unknown) => console.error('[sql] pool error', e));
         try {
           await pool.connect();

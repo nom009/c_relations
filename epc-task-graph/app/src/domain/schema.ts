@@ -4,6 +4,9 @@
 // ============================================================================
 import { z } from 'zod';
 
+// zod の JIT は new Function() を試行し、CSP（script-src 'self'）下で違反レポートを出すため無効化する。
+z.config({ jitless: true });
+
 // 所要日数・ラグの上限（約100年）。CPM の稼働日ループが暴走しないよう取込時に制限する。
 export const MAX_DAYS = 36500;
 
