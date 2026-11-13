@@ -176,6 +176,7 @@ jobs:
         run: |
           if [ -z "$SWA_TOKEN" ]; then echo "::notice::Azure deploy skipped (secret AZURE_STATIC_WEB_APPS_API_TOKEN not set)"; fi
           if [ -n "$SWA_TOKEN" ] && [ -z "$AZURE_TENANT_ID" ]; then echo "::error::variable AZURE_TENANT_ID is required"; exit 1; fi
+          exit 0
       - if: env.SWA_TOKEN != ''
         uses: actions/checkout@v7
       - if: env.SWA_TOKEN != ''
