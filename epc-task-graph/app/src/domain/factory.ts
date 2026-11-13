@@ -4,6 +4,7 @@
 // ============================================================================
 import type { Calendar, Dependency, GraphDoc, Task } from './types';
 import { CURRENT_SCHEMA_VERSION } from './migrate';
+import { clampDays, clampLagDays } from './schema';
 
 // 一意 ID。crypto.randomUUID があれば使い、無い環境（古い実行系）は乱数＋時刻で代替。
 export function newId(): string {
@@ -39,7 +40,7 @@ export function makeTask(p: Partial<Task> = {}, by = '私'): Task {
     wbsCode: p.wbsCode != null ? p.wbsCode : '',
     discipline: p.discipline || 'OTHER',
     isMilestone,
-    durationDays: isMilestone ? 0 : p.durationDays != null ? p.durationDays : 5,
+    durationDays: isMilestone ? 0 : p.durationDays != null ? clampDays(p.durationDays) : 5,
     status: p.status || 'NOT_STARTED',
     progress: p.progress != null ? p.progress : 0,
     assignee: p.assignee != null ? p.assignee : '',
@@ -65,7 +66,7 @@ export function makeDep(
     predecessorId,
     successorId,
     type: p.type || 'FS',
-    lagDays: p.lagDays != null ? p.lagDays : 0,
+    lagDays: p.lagDays != null ? clampLagDays(p.lagDays) : 0,
     rev: p.rev != null ? p.rev : 1,
     updatedAt: p.updatedAt || nowISO(),
     updatedBy: p.updatedBy || by,

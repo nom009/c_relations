@@ -3,7 +3,7 @@
 // ・行単位テーブル（tasks/dependencies）＋ 差分書き savePatch（ダーティ行だけを put/delete）。
 // ・各行に rev/updatedBy を記録（§5.1）。ローカル単独運用のため衝突は起きないが、
 //   savePatch は baseRev を検査して PatchResult の形（衝突リスト）を最初から満たす（§7.2 L1）。
-// ・保存履歴5世代: savePatch/ saveGraph 後に全量スナップショットを1件追加し、古い物を剪定。
+// ・保存履歴: 直近5件＋それより古いものは日ごとに最新1件（最大7日分）。savePatch/ saveGraph 後に全量スナップショットを追加し、剪定。
 // ・「読みは全量・書きは差分」（§6.1）。DDL（§5.3）と同一セマンティクスを Dexie 上で再現。
 // ============================================================================
 import Dexie, { type Table } from 'dexie';
@@ -53,7 +53,35 @@ interface SnapshotRow {
 }
 
 const SNAPSHOT_KEEP = 5;
+const SNAPSHOT_KEEP_DAYS = 7;
 const AUTOSAVE_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+
+function localDayKey(iso: string): string | null {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+// 剪定で残す seq を選ぶ。直近 keepRecent 件に加え、それより古いものは「ローカル日付ごとに最新1件」を
+// 最大 keepDays 日分だけ残す（直近25分しか遡れない問題の対策）。
+export function selectSnapshotsToKeep(
+  rows: { seq: number; createdAt: string }[],
+  keepRecent: number = SNAPSHOT_KEEP,
+  keepDays: number = SNAPSHOT_KEEP_DAYS,
+): Set<number> {
+  const sorted = [...rows].sort((a, b) => b.seq - a.seq);
+  const keep = new Set<number>(sorted.slice(0, keepRecent).map((r) => r.seq));
+  const days = new Set<string>();
+  for (const r of sorted.slice(keepRecent)) {
+    if (days.size >= keepDays) break;
+    const key = localDayKey(r.createdAt);
+    if (key === null || days.has(key)) continue;
+    days.add(key);
+    keep.add(r.seq);
+  }
+  return keep;
+}
 
 class EpcDexie extends Dexie {
   projects!: Table<ProjectRow, string>;
@@ -104,6 +132,7 @@ function docToRows(doc: GraphDoc): { project: ProjectRow; tasks: TaskRow[]; deps
 
 export class DexieRepository implements GraphRepository {
   private db = new EpcDexie();
+  private sessionSnapshotted = new Set<string>();
 
   async listProjects(): Promise<ProjectMeta[]> {
     const rows = await this.db.projects.orderBy('updatedAt').reverse().toArray();
@@ -118,7 +147,23 @@ export class DexieRepository implements GraphRepository {
       await this.snapshot(raw, migrated ? 'pre-migration' : 'pre-repair');
       await this.saveGraph(doc);
     }
+    await this.ensureSessionSnapshot(doc);
     return doc;
+  }
+
+  // セッション（ページ読込）ごとに、各プロジェクトの最初の読込時点の状態を履歴に1件残す。
+  // 直近の履歴が自動保存間隔内ならそれで足りるため追加しない。失敗しても読込は妨げない。
+  private async ensureSessionSnapshot(doc: GraphDoc): Promise<void> {
+    const pid = doc.project.id;
+    if (this.sessionSnapshotted.has(pid)) return;
+    this.sessionSnapshotted.add(pid);
+    try {
+      const last = await this.db.snapshots.where('projectId').equals(pid).reverse().first();
+      if (!last || Date.now() - Date.parse(last.createdAt) >= AUTOSAVE_SNAPSHOT_INTERVAL_MS)
+        await this.snapshot(doc, 'session-start');
+    } catch {
+      /* 履歴の追加失敗は無視 */
+    }
   }
 
   // 行から GraphDoc を組み立てるだけ（移行・検証なし）。スナップショット採取にも使う。
@@ -228,7 +273,7 @@ export class DexieRepository implements GraphRepository {
     );
 
     if (conflicts.length) return { ok: false, conflicts };
-    // 保存履歴（5世代）: 自動保存は一定間隔ごとにだけ全量スナップショットを残す。
+    // 保存履歴: 自動保存は一定間隔ごとにだけ全量スナップショットを残す。
     // 500msデバウンスの保存ごとに撮ると5世代が数秒で埋まり、履歴として機能しない上に重い。
     try {
       const last = await this.db.snapshots.where('projectId').equals(pid).reverse().first();
@@ -294,12 +339,16 @@ export class DexieRepository implements GraphRepository {
       // 参照ではなくディープコピーを保存（後続編集の影響を受けない）。
       doc: JSON.parse(JSON.stringify(doc)) as GraphDoc,
     });
-    const keys = await this.db.snapshots.where('projectId').equals(pid).primaryKeys();
-    if (keys.length > SNAPSHOT_KEEP) {
-      const sorted = (keys as number[]).sort((a, b) => a - b);
-      const drop = sorted.slice(0, sorted.length - SNAPSHOT_KEEP);
-      await this.db.snapshots.bulkDelete(drop);
-    }
+    // 本体（doc）を読まないよう、キーだけで createdAt と seq を突き合わせる。
+    const own = new Set((await this.db.snapshots.where('projectId').equals(pid).primaryKeys()) as number[]);
+    const byTime = this.db.snapshots.orderBy('createdAt');
+    const [times, seqs] = await Promise.all([byTime.keys(), byTime.primaryKeys()]);
+    const rows = seqs
+      .map((seq, i) => ({ seq: seq as number, createdAt: String(times[i]) }))
+      .filter((r) => own.has(r.seq));
+    const keep = selectSnapshotsToKeep(rows);
+    const drop = rows.filter((r) => !keep.has(r.seq)).map((r) => r.seq);
+    if (drop.length) await this.db.snapshots.bulkDelete(drop);
   }
 }
 

@@ -71,7 +71,8 @@ describe('validate: §5.2 バリデーション①〜⑦', () => {
     outOfRange.calendars[0].workingDays = [7];
     expect(validateDoc(outOfRange).ok).toBe(false);
     const huge: any = emptyDoc();
-    huge.tasks = [makeTask({ name: 'x', durationDays: 1e9 })];
+    // makeTask は上限で丸めるため、取込データ相当として直接書き換える
+    huge.tasks = [{ ...makeTask({ name: 'x' }), durationDays: 1e9 }];
     expect(validateDoc(huge).ok).toBe(false);
   });
 

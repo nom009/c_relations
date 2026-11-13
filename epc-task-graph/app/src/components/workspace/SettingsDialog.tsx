@@ -11,7 +11,8 @@ export function SettingsDialog({
 }) {
   const project = useApp((s) => s.project),
     cal = useApp(selectActiveCalendar),
-    me = useApp((s) => s.me);
+    me = useApp((s) => s.me),
+    storagePersisted = useApp((s) => s.storagePersisted);
   const [name, setName] = useState(isNew ? "" : project.name),
     [date, setDate] = useState(
       isNew ? new Date().toLocaleDateString("sv-SE") : project.dataDate,
@@ -132,6 +133,13 @@ export function SettingsDialog({
               </details>
               <div className="storage-note">
                 データはこのブラウザに保存されます。端末を移す際は「データ」からJSONを書き出してください。
+                {storagePersisted !== null && (
+                  <div data-testid="storage-persisted">
+                    {storagePersisted
+                      ? "保存領域: 保護済み"
+                      : "保存領域: 未保護（ブラウザが容量不足時に削除する場合があります。定期的にJSONで書き出してください）"}
+                  </div>
+                )}
               </div>
             </>
           )}

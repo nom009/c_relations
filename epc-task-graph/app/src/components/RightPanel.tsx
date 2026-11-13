@@ -7,6 +7,7 @@ import {
   DISCIPLINES,
   STATUSES,
   DISC_LABEL,
+  MAX_DAYS,
   STATUS_LABEL,
   type Dependency,
   type Task,
@@ -132,7 +133,7 @@ function DraftField({
   );
 }
 const isLagDays = (v: string) =>
-  /^-?\d+$/.test(v) && Math.abs(Number(v)) <= 36500;
+  /^-?\d+$/.test(v) && Math.abs(Number(v)) <= MAX_DAYS;
 
 function DurationEditor({ task }: { task: Task }) {
   const tasks = useApp((s) => s.tasks),

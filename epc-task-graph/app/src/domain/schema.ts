@@ -7,6 +7,17 @@ import { z } from 'zod';
 // 所要日数・ラグの上限（約100年）。CPM の稼働日ループが暴走しないよう取込時に制限する。
 export const MAX_DAYS = 36500;
 
+// 非有限値は 0 とみなし、[min, MAX_DAYS] に収める（ストア境界での入力ガード）。
+export function clampDays(v: number, min = 0): number {
+  const n = Number.isFinite(v) ? v : 0;
+  return Math.min(MAX_DAYS, Math.max(min, n));
+}
+
+// ラグは整数・[-MAX_DAYS, MAX_DAYS]。
+export function clampLagDays(v: number): number {
+  return Math.round(clampDays(v, -MAX_DAYS));
+}
+
 export function isValidIsoDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const t = Date.parse(s + 'T00:00:00Z');

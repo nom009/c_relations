@@ -5,6 +5,7 @@ import type { GraphDoc, ProjectMeta } from "../domain";
 
 const LS_LAST_BACKUP = "epc-last-backup-at";
 const REMIND_AFTER_DAYS = 7;
+const REMIND_AFTER_DAYS_UNPROTECTED = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface DownloadOptions {
@@ -31,17 +32,20 @@ export function downloadJson(doc: GraphDoc, opts: DownloadOptions = {}): void {
   }
 }
 
-// 最も古いプロジェクトが7日以上前に作られ、かつ直近7日にバックアップが無い時だけ文言を返す。
+// 最も古いプロジェクトが閾値日数以上前に作られ、かつ直近の閾値日数以内にバックアップが無い時だけ文言を返す。
+// 保存領域が未保護（persisted === false。ブラウザが容量不足時に削除しうる）なら閾値を7日→3日に短縮する。
 // 作成直後のプロジェクトでは出さない。
 export function backupReminderMessage(
   projects: Pick<ProjectMeta, "createdAt">[],
   now: number = Date.now(),
+  persisted: boolean | null = null,
 ): string | null {
+  const remindAfterDays = persisted === false ? REMIND_AFTER_DAYS_UNPROTECTED : REMIND_AFTER_DAYS;
   const created = projects
     .map((p) => Date.parse(p.createdAt))
     .filter((t) => Number.isFinite(t));
   if (!created.length) return null;
-  if (now - Math.min(...created) < REMIND_AFTER_DAYS * DAY_MS) return null;
+  if (now - Math.min(...created) < remindAfterDays * DAY_MS) return null;
   let last = NaN;
   try {
     last = Date.parse(localStorage.getItem(LS_LAST_BACKUP) ?? "");
@@ -52,20 +56,18 @@ export function backupReminderMessage(
     return "まだバックアップがありません。JSONエクスポートでバックアップしてください";
   }
   const days = Math.floor((now - last) / DAY_MS);
-  if (days < REMIND_AFTER_DAYS) return null;
+  if (days < remindAfterDays) return null;
   return `最終バックアップから${days}日経過しています。JSONエクスポートでバックアップしてください`;
 }
 
-// ブラウザによる自動削除を避けるため、永続ストレージを要求する（UIなし・失敗は無視）。
-export function requestPersistentStorage(): void {
+// ブラウザによる自動削除を避けるため、永続ストレージを要求する。保護済みか（非対応・失敗は null）を返す。
+export async function requestPersistentStorage(): Promise<boolean | null> {
   try {
     const s = typeof navigator !== "undefined" ? navigator.storage : undefined;
-    if (!s || typeof s.persisted !== "function" || typeof s.persist !== "function") return;
-    void s
-      .persisted()
-      .then((ok) => (ok ? undefined : s.persist()))
-      .catch(() => undefined);
+    if (!s || typeof s.persisted !== "function" || typeof s.persist !== "function") return null;
+    if (await s.persisted()) return true;
+    return await s.persist();
   } catch {
-    /* 非対応環境 */
+    return null;
   }
 }

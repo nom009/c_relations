@@ -28,6 +28,7 @@ import {
   type ViewSpec,
   type ViewState,
   canConnect,
+  clampLagDays,
   isValidIsoDate,
   makeDep,
   makeTask,
@@ -43,6 +44,7 @@ import {
 import { runFullLayout } from "../layout/layout";
 import { CorruptDocError } from "../storage/GraphRepository";
 import { backupReminderMessage, downloadJson, requestPersistentStorage } from "./backup";
+import { isWriterTab } from "./writerLock";
 import {
   getCurrentProjectId,
   getRepo,
@@ -184,6 +186,7 @@ export interface AppState {
   lastConnected: { id: string; at: number } | null; // 直前に接続した依存ID（通電エフェクト用・非永続）
   burst: { source: string; target: string } | null; // 直前の接続の両端（回路エフェクト用・一瞬だけ）
   projectList: ProjectMeta[]; // 複数プロジェクト一覧（§6.1）
+  storagePersisted: boolean | null; // 永続ストレージの保護状況（null=未確認/非対応）。非永続
 
   // ---- 多ビュー表示状態（§12.2・Undo対象外・Dexie非永続）----
   activeView: ActiveView; // localStorage 記憶
@@ -290,6 +293,7 @@ let activeFlush: Promise<void> | null = null;
 // Imports must keep retrying a full replacement until it succeeds.
 let pendingFullSave: symbol | null = null;
 function enqueueWrite<T>(write: () => Promise<T>): Promise<T> {
+  if (!isWriterTab()) return Promise.reject(new Error("別のタブが書き込み中です"));
   const result = writeQueue.then(write);
   writeQueue = result.catch(() => undefined);
   return result;
@@ -297,6 +301,7 @@ function enqueueWrite<T>(write: () => Promise<T>): Promise<T> {
 
 // Serialize writes; retain dirty rows if another edit happens during a save.
 export function flushPersistence(): Promise<void> {
+  if (!isWriterTab()) return Promise.resolve(); // 別タブが書込権を持つ間は書かない
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
@@ -347,7 +352,7 @@ export function flushPersistence(): Promise<void> {
 function scheduleSave() {
   saveGeneration++;
   useApp.setState({ saveStatus: "dirty" });
-  if (hydrating) return;
+  if (hydrating || !isWriterTab()) return;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     void flushPersistence().catch(() => undefined);
@@ -455,7 +460,10 @@ async function loadGraphWithRecovery(id: string): Promise<{ doc: GraphDoc; notif
 // （同期表示済みの state をクロバーしない）。既存プロジェクトがある時のみ読み込んで差し替える。
 export async function bootstrapStore(): Promise<void> {
   hydrating = true;
-  requestPersistentStorage();
+  const persistedReq = requestPersistentStorage().then((persisted) => {
+    useApp.setState({ storagePersisted: persisted });
+    return persisted;
+  });
   try {
     const repo = getRepo();
     const list = await repo.listProjects();
@@ -469,8 +477,15 @@ export async function bootstrapStore(): Promise<void> {
       setCurrentProjectId(targetId);
       const { doc, notified } = await loadGraphWithRecovery(targetId);
       useApp.getState().loadDoc(doc, { persist: false });
-      const reminder = notified ? null : backupReminderMessage(list);
-      if (reminder) useApp.getState().showToast(reminder);
+      // 永続化の結果は待たせずに起動し、判明後（遅くとも1.5秒後）にリマインドを判定する。
+      if (!notified)
+        void Promise.race([
+          persistedReq,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
+        ]).then((persisted) => {
+          const reminder = backupReminderMessage(list, Date.now(), persisted);
+          if (reminder) useApp.getState().showToast(reminder);
+        });
     }
     await useApp.getState().refreshProjects();
   } catch (err) {
@@ -601,6 +616,7 @@ export const useApp = create<AppState>()(
       lastConnected: null,
       burst: null,
       projectList: [],
+      storagePersisted: null,
       activeView: initialActiveView(),
       tableSort: [],
       tableColumns: initialTableColumns(),
@@ -750,7 +766,11 @@ export const useApp = create<AppState>()(
         set((s) => {
           const d = s.dependencies.find((x) => x.id === id);
           if (!d) return;
-          Object.assign(d, patch);
+          const next =
+            patch.lagDays === undefined
+              ? patch
+              : { ...patch, lagDays: clampLagDays(patch.lagDays) };
+          Object.assign(d, next);
           d.rev += 1;
           d.updatedAt = nowISO();
           d.updatedBy = s.me;

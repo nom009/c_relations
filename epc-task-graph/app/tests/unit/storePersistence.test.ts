@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
-import { emptyDoc, makeTask } from "../../src/domain";
+import { emptyDoc, makeTask, MAX_DAYS } from "../../src/domain";
 const mocks = vi.hoisted(() => ({
   patch: vi.fn(),
   save: vi.fn(),
@@ -220,5 +220,20 @@ describe("Persistence across product workflows", () => {
     expect(useApp.getState().connectSource).toBeNull();
     expect(useApp.getState().addDependencyChecked(a.id, b.id)).toBe(false);
     expect(useApp.getState().dependencies).toHaveLength(0);
+  });
+  it("clamps durationDays and lagDays to MAX_DAYS at the store boundary", () => {
+    const a = makeTask({ name: "a" }),
+      b = makeTask({ name: "b" }),
+      doc = emptyDoc();
+    doc.tasks = [a, b];
+    useApp.getState().loadDoc(doc, { persist: false });
+    useApp.getState().updateTask(a.id, { durationDays: 9999999 });
+    expect(useApp.getState().tasks[0].durationDays).toBe(MAX_DAYS);
+    expect(useApp.getState().addDependencyChecked(a.id, b.id)).toBe(true);
+    const depId = useApp.getState().dependencies[0].id;
+    useApp.getState().updateDep(depId, { lagDays: -9999999 });
+    expect(useApp.getState().dependencies[0].lagDays).toBe(-MAX_DAYS);
+    useApp.getState().updateDep(depId, { lagDays: Number.NaN });
+    expect(useApp.getState().dependencies[0].lagDays).toBe(0);
   });
 });

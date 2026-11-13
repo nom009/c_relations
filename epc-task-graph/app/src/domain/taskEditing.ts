@@ -1,4 +1,5 @@
 import type { Task } from "./types";
+import { clampDays } from "./schema";
 /** Keep values created by the editor internally consistent without migrating imported records. */
 export function normalizeTaskPatch(
   task: Task,
@@ -12,11 +13,7 @@ export function normalizeTaskPatch(
         Math.min(100, Number.isFinite(next.progress) ? next.progress : 0),
       ),
     );
-  if (next.durationDays !== undefined)
-    next.durationDays = Math.max(
-      0,
-      Number.isFinite(next.durationDays) ? next.durationDays : 0,
-    );
+  if (next.durationDays !== undefined) next.durationDays = clampDays(next.durationDays);
   if (next.status === "DONE") next.progress = 100;
   else if (next.status === "NOT_STARTED") next.progress = 0;
   else if (

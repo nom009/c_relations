@@ -28,4 +28,16 @@ describe("backupReminderMessage", () => {
     stubBackup(iso(2));
     expect(backupReminderMessage([{ createdAt: iso(30) }], now)).toBeNull();
   });
+
+  it("shortens the threshold to 3 days when storage is not persisted", () => {
+    stubBackup(iso(4));
+    expect(backupReminderMessage([{ createdAt: iso(30) }], now, false)).toMatch(/4日経過/);
+    expect(backupReminderMessage([{ createdAt: iso(30) }], now, true)).toBeNull();
+    expect(backupReminderMessage([{ createdAt: iso(30) }], now, null)).toBeNull();
+    stubBackup(iso(2));
+    expect(backupReminderMessage([{ createdAt: iso(30) }], now, false)).toBeNull();
+    stubBackup(null);
+    expect(backupReminderMessage([{ createdAt: iso(2) }], now, false)).toBeNull();
+    expect(backupReminderMessage([{ createdAt: iso(4) }], now, false)).toMatch(/まだバックアップがありません/);
+  });
 });

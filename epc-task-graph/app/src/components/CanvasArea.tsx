@@ -59,6 +59,18 @@ function keepSelected<T extends { id: string; selected?: boolean }>(prev: T[], n
   return sel.size ? next.map((x) => (sel.has(x.id) ? { ...x, selected: true } : x)) : next;
 }
 
+// ノードは選択状態に加えて React Flow の測定済み寸法(measured)も引き継ぐ。再生成で寸法が消えると
+// ノードが未測定扱い(visibility:hidden)になり、ResizeObserver の再通知が render にまとめられて
+// 取りこぼされた場合に不可視のまま残るため。
+function keepNodeRuntime(prev: Node<RFNodeData>[], next: Node<RFNodeData>[]): Node<RFNodeData>[] {
+  const old = new Map(prev.map((n) => [n.id, n]));
+  return next.map((n) => {
+    const p = old.get(n.id);
+    if (!p || (!p.measured && !p.selected)) return n;
+    return { ...n, ...(p.measured ? { measured: p.measured } : {}), ...(p.selected ? { selected: true } : {}) };
+  });
+}
+
 function FocusBar() {
   const focus = useApp((s) => s.viewSpec.focus);
   const name = useApp((s) => (s.viewSpec.focus ? nameOf(s.viewSpec.focus.taskId) : ''));
@@ -181,7 +193,7 @@ export function CanvasArea() {
   const [nodes, setNodes] = useState<Node<RFNodeData>[]>(() => toRFNodes(displayNodes));
   const [edges, setEdges] = useState<Edge[]>(() => toRFEdges(derived.visibleEdges, energized));
   useEffect(() => {
-    setNodes((prev) => keepSelected(prev, toRFNodes(displayNodes)));
+    setNodes((prev) => keepNodeRuntime(prev, toRFNodes(displayNodes)));
     setEdges((prev) => keepSelected(prev, toRFEdges(derived.visibleEdges, energized)));
   }, [derived, displayNodes, energized]);
 
