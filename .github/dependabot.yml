@@ -1,0 +1,38 @@
+# 依存関係の更新 PR を週1回作成する（CI が通ったものだけマージする）。
+# minor/patch はエコシステムごとに 1 本へまとめ、major は個別 PR で影響を確認する。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /epc-task-graph/app
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5
+    groups:
+      app-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /epc-task-graph/api
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5
+    groups:
+      api-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    groups:
+      actions:
+        patterns: ["*"]

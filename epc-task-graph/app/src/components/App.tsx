@@ -2,7 +2,7 @@ import { TaskDialog } from "./workspace/TaskDialog";
 import { SettingsDialog } from "./workspace/SettingsDialog";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useApp, selectReadOnly } from "../store/store";
-import { API_MODE } from "../storage/mode";
+import { API_MODE, DEMO_MODE } from "../storage/mode";
 import type { ActiveView } from "../domain";
 import { Header } from "./Header";
 import { LeftPanel } from "./LeftPanel";
@@ -207,6 +207,10 @@ export function App() {
               {API_MODE ? (
                 <>
                   共有ワークスペース<small>データはサーバーに保存</small>
+                </>
+              ) : DEMO_MODE ? (
+                <>
+                  デモ版<small>データはこのブラウザのみに保存・共有不可</small>
                 </>
               ) : (
                 <>

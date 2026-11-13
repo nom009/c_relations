@@ -1,6 +1,9 @@
 name: CI
 
-# PR: 検証のみ。main への push: 検証（lint・unit・build・E2E）が全て通った時だけ Pages へデプロイ。
+# PR: 検証のみ。main への push: 検証（lint・unit・build・E2E）が全て通った時だけデプロイする。
+# 配信先はリポジトリ変数で明示的に有効化する（docs/azure-deployment.md「配信先の設定」）:
+#   DEPLOY_PAGES=true  … 公開デモ版（GitHub Pages・ブラウザ内保存）
+#   DEPLOY_AZURE=true  … サーバー版（Azure Static Web Apps）。GitHub Environment（AZURE_ENVIRONMENT、既定 production）経由。
 on:
   pull_request:
     branches: [main]
@@ -38,9 +41,11 @@ jobs:
       - name: Run unit tests
         # Avoid CPU contention between performance tests on the shared runner.
         run: npm test -- --no-file-parallelism
-      - name: Check types and build for GitHub Pages
+      - name: Check types and build for GitHub Pages (demo edition)
+        env:
+          VITE_DEMO: "true"
         run: npm run build -- --base=/c_relations/
-      - if: github.event_name != 'pull_request'
+      - if: github.event_name != 'pull_request' && vars.DEPLOY_PAGES == 'true'
         uses: actions/upload-pages-artifact@v5
         with:
           path: epc-task-graph/app/dist
@@ -142,7 +147,7 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DEPLOY_PAGES == 'true'
     needs: [test-and-build, e2e, api, e2e-api]
     runs-on: ubuntu-latest
     permissions:
@@ -160,11 +165,15 @@ jobs:
         uses: actions/deploy-pages@v5
 
   deploy-azure:
-    # サーバー版（複数人編集）。AZURE_STATIC_WEB_APPS_API_TOKEN 未登録の間はスキップ（docs/azure-deployment.md）。
+    # サーバー版（複数人編集）。リポジトリ変数 DEPLOY_AZURE=true の時だけ動く（docs/azure-deployment.md）。
+    # シークレット/変数は Environment 単位でも置ける（本番は承認者付きの production を推奨）。
     name: Deploy server edition to Azure Static Web Apps
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DEPLOY_AZURE == 'true'
     needs: [test-and-build, e2e, api, e2e-api]
     runs-on: ubuntu-latest
+    environment:
+      name: ${{ vars.AZURE_ENVIRONMENT || 'production' }}
+      url: ${{ steps.swa.outputs.static_web_app_url }}
     concurrency:
       group: azure-swa
       cancel-in-progress: false
@@ -175,13 +184,11 @@ jobs:
       - name: Check configuration
         working-directory: .
         run: |
-          if [ -z "$SWA_TOKEN" ]; then echo "::notice::Azure deploy skipped (secret AZURE_STATIC_WEB_APPS_API_TOKEN not set)"; fi
-          if [ -n "$SWA_TOKEN" ] && [ -z "$AZURE_TENANT_ID" ]; then echo "::error::variable AZURE_TENANT_ID is required"; exit 1; fi
+          if [ -z "$SWA_TOKEN" ]; then echo "::error::secret AZURE_STATIC_WEB_APPS_API_TOKEN is required when DEPLOY_AZURE=true"; exit 1; fi
+          if [ -z "$AZURE_TENANT_ID" ]; then echo "::error::variable AZURE_TENANT_ID is required when DEPLOY_AZURE=true"; exit 1; fi
           exit 0
-      - if: env.SWA_TOKEN != ''
-        uses: actions/checkout@v7
-      - if: env.SWA_TOKEN != ''
-        uses: actions/setup-node@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -189,19 +196,17 @@ jobs:
             epc-task-graph/app/package-lock.json
             epc-task-graph/api/package-lock.json
       - name: Build app (server mode)
-        if: env.SWA_TOKEN != ''
         run: |
           npm ci
           VITE_STORAGE=api npm run build
           sed "s/__AZURE_TENANT_ID__/$AZURE_TENANT_ID/" ../swa/staticwebapp.config.json > dist/staticwebapp.config.json
       - name: Build API
-        if: env.SWA_TOKEN != ''
         working-directory: epc-task-graph/api
         run: |
           npm ci
           npm run package:deploy
           cd ../api-deploy && npm install --omit=dev --no-audit --no-fund
-      - if: env.SWA_TOKEN != ''
+      - id: swa
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ env.SWA_TOKEN }}

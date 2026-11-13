@@ -4,7 +4,7 @@ import { Icon } from "./workspace/Icon";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { useApp, selectActiveCalendar, selectReadOnly, flushPersistence } from "../store/store";
-import { API_MODE } from "../storage/mode";
+import { API_MODE, DEMO_MODE } from "../storage/mode";
 import { selectCpm } from "../store/selectors";
 import { downloadJson } from "../store/backup";
 import { useSelectedTask } from "../store/hooks";
@@ -321,6 +321,15 @@ export function Header({
       {API_MODE && readOnly ? (
         <span className="role-badge" data-testid="readonly-badge" title="このプロジェクトは閲覧のみ可能です">
           閲覧のみ
+        </span>
+      ) : null}
+      {DEMO_MODE ? (
+        <span
+          className="role-badge"
+          data-testid="demo-badge"
+          title="公開デモ版です。データはこのブラウザにのみ保存され、他の人とは共有されません。"
+        >
+          デモ版
         </span>
       ) : null}
       <span className="spacer" />
