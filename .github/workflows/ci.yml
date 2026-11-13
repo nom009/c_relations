@@ -173,6 +173,7 @@ jobs:
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
     steps:
       - name: Check configuration
+        working-directory: .
         run: |
           if [ -z "$SWA_TOKEN" ]; then echo "::notice::Azure deploy skipped (secret AZURE_STATIC_WEB_APPS_API_TOKEN not set)"; fi
           if [ -n "$SWA_TOKEN" ] && [ -z "$AZURE_TENANT_ID" ]; then echo "::error::variable AZURE_TENANT_ID is required"; exit 1; fi
