@@ -27,7 +27,7 @@ import {
   type VisibleNode,
 } from '../domain';
 import { toRFNodes, toRFEdges, type RFNodeData } from '../adapters/reactflow';
-import { dagreLayout } from '../layout/layout';
+import { dagreLayout } from '../layout/dagreCore';
 import { useApp, explainReject, nameOf } from '../store/store';
 import { useCpm, useVisibleGraph } from '../store/hooks';
 import { nodeTypes } from './nodes';
@@ -148,6 +148,9 @@ export function CanvasArea() {
   const focus = viewSpec.focus;
   const rf = useReactFlow();
   const dragSrc = useRef<string | null>(null);
+  // React Flow はマウント直後にも空の選択を通知する。グラフ上で選んだものが外れた時だけ
+  // ストアの選択を解除し、他ビュー/概要から来た選択（検索ジャンプ・新規追加）を消さない。
+  const rfHasSelection = useRef(false);
 
   // 表示パイプライン（CPM 注入済み・モジュールキャッシュで左パネルと共有、§2.6/§9.2）。
   const cpm = useCpm();
@@ -251,14 +254,19 @@ export function CanvasArea() {
   }, []);
 
   const onSelectionChange = useCallback(({ nodes: sn, edges: se }: { nodes: Node[]; edges: Edge[] }) => {
+    const empty = (!sn || !sn.length) && (!se || !se.length);
+    if (empty) {
+      if (rfHasSelection.current) useApp.getState().setSelection({});
+      rfHasSelection.current = false;
+      return;
+    }
+    rfHasSelection.current = true;
     if (sn && sn.length === 1) {
       const id = sn[0].id;
       if (id.startsWith('wbs::')) useApp.getState().setSelection({ aggId: id });
       else useApp.getState().setSelection({ taskId: id });
     } else if (se && se.length === 1) {
       useApp.getState().setSelection({ edgeId: se[0].id });
-    } else if ((!sn || !sn.length) && (!se || !se.length)) {
-      useApp.getState().setSelection({});
     }
   }, []);
   const onNodesDelete = useCallback((del: Node[]) => {

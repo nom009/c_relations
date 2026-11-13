@@ -1,16 +1,20 @@
 import { TaskDialog } from "./workspace/TaskDialog";
 import { SettingsDialog } from "./workspace/SettingsDialog";
-import { useEffect, useState } from "react";
-import { ReactFlowProvider } from "@xyflow/react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useApp } from "../store/store";
 import type { ActiveView } from "../domain";
 import { Header } from "./Header";
 import { LeftPanel } from "./LeftPanel";
 import { RightPanel } from "./RightPanel";
-import { ViewShell } from "./ViewShell";
 import { SearchPalette } from "./SearchPalette";
 import { Overview } from "./workspace/Overview";
 import { Icon, type IconName } from "./workspace/Icon";
+
+// 作業ビュー（React Flow / dagre / 仮想化テーブル / ガント）は別チャンク。概要画面を先に描画し、
+// アイドル時に先読みしておく。
+const loadViewShell = () => import("./ViewShell");
+const ViewShell = lazy(() => loadViewShell().then((m) => ({ default: m.ViewShell })));
+
 const views: { id: ActiveView; label: string; icon: IconName; key: string }[] =
   [
     { id: "graph", label: "依存関係", icon: "graph", key: "G" },
@@ -34,6 +38,9 @@ export function App() {
     setOverview(false);
   };
   const create = () => setDialog("task");
+  useEffect(() => {
+    void loadViewShell();
+  }, []);
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
@@ -71,237 +78,237 @@ export function App() {
   }, []);
 
   return (
-    <ReactFlowProvider>
-      <div className="app redesigned-app">
-        <aside className="workspace-nav">
+    <div className="app redesigned-app">
+      <aside className="workspace-nav">
+        <button
+          title="プロジェクト概要"
+          className="workspace-brand"
+          onClick={() => setOverview(true)}
+          aria-label="C-Relations ホーム"
+        >
+          <span className="brand-symbol">
+            <Icon name="graph" size={23} />
+          </span>
+          <span>
+            C-Relations<small>PROJECT WORKSPACE</small>
+          </span>
+        </button>
+        <button
+          className="nav-search"
+          onClick={() =>
+            window.dispatchEvent(
+              new KeyboardEvent("keydown", { key: "k", metaKey: true }),
+            )
+          }
+        >
+          <Icon name="search" />
+          <span>タスクを検索</span>
+          <kbd>⌘ K</kbd>
+        </button>
+        <div className="nav-section-label">ワークスペース</div>
+        <nav aria-label="メインナビゲーション">
           <button
             title="プロジェクト概要"
-            className="workspace-brand"
+            aria-label="プロジェクト概要"
+            aria-current={overview ? "page" : undefined}
+            className={"nav-item " + (overview ? "active" : "")}
             onClick={() => setOverview(true)}
-            aria-label="C-Relations ホーム"
           >
-            <span className="brand-symbol">
-              <Icon name="graph" size={23} />
-            </span>
-            <span>
-              C-Relations<small>PROJECT WORKSPACE</small>
-            </span>
+            <Icon name="overview" />
+            プロジェクト概要
           </button>
-          <button
-            className="nav-search"
-            onClick={() =>
-              window.dispatchEvent(
-                new KeyboardEvent("keydown", { key: "k", metaKey: true }),
-              )
-            }
-          >
-            <Icon name="search" />
-            <span>タスクを検索</span>
-            <kbd>⌘ K</kbd>
-          </button>
-          <div className="nav-section-label">ワークスペース</div>
-          <nav aria-label="メインナビゲーション">
+          {views.map((v) => (
             <button
-              title="プロジェクト概要"
-              aria-label="プロジェクト概要"
-              aria-current={overview ? "page" : undefined}
-              className={"nav-item " + (overview ? "active" : "")}
-              onClick={() => setOverview(true)}
+              title={v.label}
+              aria-label={v.label}
+              aria-current={
+                !overview && activeView === v.id ? "page" : undefined
+              }
+              className={
+                "nav-item " +
+                (!overview && activeView === v.id ? "active" : "")
+              }
+              key={v.id}
+              onClick={() => navigate(v.id)}
             >
-              <Icon name="overview" />
-              プロジェクト概要
+              <Icon name={v.icon} />
+              {v.label}
+              <kbd>{v.key}</kbd>
             </button>
-            {views.map((v) => (
-              <button
-                title={v.label}
-                aria-label={v.label}
-                aria-current={
-                  !overview && activeView === v.id ? "page" : undefined
-                }
-                className={
-                  "nav-item " +
-                  (!overview && activeView === v.id ? "active" : "")
-                }
-                key={v.id}
-                onClick={() => navigate(v.id)}
-              >
-                <Icon name={v.icon} />
-                {v.label}
-                <kbd>{v.key}</kbd>
-              </button>
-            ))}
-          </nav>
-          <div className="nav-divider" />
-          <div className="nav-section-label">クイックアクセス</div>
-          <button
-            className="nav-item"
-            onClick={() => {
-              useApp.getState().quickMyTasks();
-              navigate("table");
-            }}
-          >
-            <Icon name="folder" />
-            自分のタスク
-          </button>
-          <button
-            className="nav-item"
-            onClick={() => {
-              useApp.getState().quickCriticalOnly();
-              navigate("graph");
-            }}
-          >
-            <span className="signal red" />
-            クリティカルパス
-          </button>
-          <button
-            className="nav-item"
-            onClick={() => {
-              useApp.getState().clearFilter();
-              useApp.getState().setFilter({ milestonesOnly: true });
-              useApp.getState().setDisplayMode("ISOLATE");
-              navigate("gantt");
-            }}
-          >
-            <Icon name="spark" />
-            マイルストーン
-          </button>
-          <div className="nav-bottom">
-            <div className="local-notice">
-              <span className="signal green" />
-              <span>
-                ローカルワークスペース<small>データはこのブラウザに保存</small>
-              </span>
-            </div>
-            <div className="nav-user">
-              <span className="user-avatar">{me.slice(0, 1)}</span>
-              <span>
-                {me}
-                <small>工程管理</small>
-              </span>
-              <button
-                className="icon-button"
-                aria-label="ワークスペース設定"
-                onClick={() => setDialog("settings")}
-              >
-                <Icon name="settings" />
-              </button>
-            </div>
-          </div>
-        </aside>
-        <main className="workspace-main">
-          <Header
-            onNewProject={() => setDialog("project")}
-            onSettings={() => setDialog("settings")}
-          />
-          <div className="workspace-heading">
-            <div>
-              <div className="workspace-breadcrumb">
-                ワークスペース
-                <Icon name="chevron" size={12} />
-                <span>{project.name}</span>
-                {project.description.includes("サンプル") && (
-                  <span className="sample-badge">サンプル</span>
-                )}
-              </div>
-              <h1>
-                {overview
-                  ? "プロジェクト概要"
-                  : views.find((v) => v.id === activeView)?.label}
-              </h1>
-              <p>
-                {overview
-                  ? "工程の現在地を確認して、次の一手へ。"
-                  : `${tasks.length}件のタスク · 変更はすべてのビューに反映されます`}
-              </p>
-            </div>
-            <div className="heading-actions">
-              {!overview && (
-                <button
-                  aria-label="絞り込み"
-                  title="絞り込み"
-                  className={"btn " + (filters ? "on" : "")}
-                  onClick={() => setFilters((v) => !v)}
-                >
-                  <Icon name="filter" />
-                  絞り込み
-                </button>
-              )}
-              <button
-                aria-label="タスクを追加"
-                title="タスクを追加"
-                className="btn primary"
-                onClick={create}
-              >
-                <Icon name="plus" />
-                タスクを追加
-              </button>
-            </div>
-          </div>
-          {overview ? (
-            <Overview onNavigate={navigate} onCreate={create} />
-          ) : (
-            <div className="body editor-body">
-              {filters && (
-                <div className="filter-drawer">
-                  <div className="drawer-heading">
-                    表示する範囲
-                    <button
-                      className="icon-button"
-                      aria-label="絞り込みを閉じる"
-                      onClick={() => setFilters(false)}
-                    >
-                      <Icon name="close" />
-                    </button>
-                  </div>
-                  <LeftPanel />
-                </div>
-              )}
-              <ViewShell />
-              {selection && (
-                <div className="inspector">
-                  <div className="drawer-heading">
-                    タスクの詳細
-                    <button
-                      className="icon-button"
-                      aria-label="詳細を閉じる"
-                      onClick={() =>
-                        useApp.getState().setSelection({ taskId: null })
-                      }
-                    >
-                      <Icon name="close" />
-                    </button>
-                  </div>
-                  <RightPanel key={selection} />
-                </div>
-              )}
-            </div>
-          )}
-        </main>
-        <div className="toasts" role="status" aria-live="polite">
-          {toast.map((t) => (
-            <div key={t.id} className={"toast" + (t.err ? " err" : "")}>
-              {t.msg}
-            </div>
           ))}
+        </nav>
+        <div className="nav-divider" />
+        <div className="nav-section-label">クイックアクセス</div>
+        <button
+          className="nav-item"
+          onClick={() => {
+            useApp.getState().quickMyTasks();
+            navigate("table");
+          }}
+        >
+          <Icon name="folder" />
+          自分のタスク
+        </button>
+        <button
+          className="nav-item"
+          onClick={() => {
+            useApp.getState().quickCriticalOnly();
+            navigate("graph");
+          }}
+        >
+          <span className="signal red" />
+          クリティカルパス
+        </button>
+        <button
+          className="nav-item"
+          onClick={() => {
+            useApp.getState().clearFilter();
+            useApp.getState().setFilter({ milestonesOnly: true });
+            useApp.getState().setDisplayMode("ISOLATE");
+            navigate("gantt");
+          }}
+        >
+          <Icon name="spark" />
+          マイルストーン
+        </button>
+        <div className="nav-bottom">
+          <div className="local-notice">
+            <span className="signal green" />
+            <span>
+              ローカルワークスペース<small>データはこのブラウザに保存</small>
+            </span>
+          </div>
+          <div className="nav-user">
+            <span className="user-avatar">{me.slice(0, 1)}</span>
+            <span>
+              {me}
+              <small>工程管理</small>
+            </span>
+            <button
+              className="icon-button"
+              aria-label="ワークスペース設定"
+              onClick={() => setDialog("settings")}
+            >
+              <Icon name="settings" />
+            </button>
+          </div>
         </div>
-        <SearchPalette onPick={() => navigate("graph")} />
-        {dialog === "task" && (
-          <TaskDialog
-            onClose={() => setDialog(null)}
-            onCreated={() => navigate("table")}
-          />
-        )}{" "}
-        {(dialog === "settings" || dialog === "project") && (
-          <SettingsDialog
-            key={dialog}
-            isNew={dialog === "project"}
-            onClose={() => {
-              if (dialog === "project") setOverview(true);
-              setDialog(null);
-            }}
-          />
+      </aside>
+      <main className="workspace-main">
+        <Header
+          onNewProject={() => setDialog("project")}
+          onSettings={() => setDialog("settings")}
+        />
+        <div className="workspace-heading">
+          <div>
+            <div className="workspace-breadcrumb">
+              ワークスペース
+              <Icon name="chevron" size={12} />
+              <span>{project.name}</span>
+              {project.description.includes("サンプル") && (
+                <span className="sample-badge">サンプル</span>
+              )}
+            </div>
+            <h1>
+              {overview
+                ? "プロジェクト概要"
+                : views.find((v) => v.id === activeView)?.label}
+            </h1>
+            <p>
+              {overview
+                ? "工程の現在地を確認して、次の一手へ。"
+                : `${tasks.length}件のタスク · 変更はすべてのビューに反映されます`}
+            </p>
+          </div>
+          <div className="heading-actions">
+            {!overview && (
+              <button
+                aria-label="絞り込み"
+                title="絞り込み"
+                className={"btn " + (filters ? "on" : "")}
+                onClick={() => setFilters((v) => !v)}
+              >
+                <Icon name="filter" />
+                絞り込み
+              </button>
+            )}
+            <button
+              aria-label="タスクを追加"
+              title="タスクを追加"
+              className="btn primary"
+              onClick={create}
+            >
+              <Icon name="plus" />
+              タスクを追加
+            </button>
+          </div>
+        </div>
+        {overview ? (
+          <Overview onNavigate={navigate} onCreate={create} />
+        ) : (
+          <div className="body editor-body">
+            {filters && (
+              <div className="filter-drawer">
+                <div className="drawer-heading">
+                  表示する範囲
+                  <button
+                    className="icon-button"
+                    aria-label="絞り込みを閉じる"
+                    onClick={() => setFilters(false)}
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
+                <LeftPanel />
+              </div>
+            )}
+            <Suspense fallback={<div className="viewshell" />}>
+              <ViewShell />
+            </Suspense>
+            {selection && (
+              <div className="inspector">
+                <div className="drawer-heading">
+                  タスクの詳細
+                  <button
+                    className="icon-button"
+                    aria-label="詳細を閉じる"
+                    onClick={() =>
+                      useApp.getState().setSelection({ taskId: null })
+                    }
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
+                <RightPanel key={selection} />
+              </div>
+            )}
+          </div>
         )}
+      </main>
+      <div className="toasts" role="status" aria-live="polite">
+        {toast.map((t) => (
+          <div key={t.id} className={"toast" + (t.err ? " err" : "")}>
+            {t.msg}
+          </div>
+        ))}
       </div>
-    </ReactFlowProvider>
+      <SearchPalette onPick={() => navigate("graph")} />
+      {dialog === "task" && (
+        <TaskDialog
+          onClose={() => setDialog(null)}
+          onCreated={() => navigate("table")}
+        />
+      )}{" "}
+      {(dialog === "settings" || dialog === "project") && (
+        <SettingsDialog
+          key={dialog}
+          isNew={dialog === "project"}
+          onClose={() => {
+            if (dialog === "project") setOverview(true);
+            setDialog(null);
+          }}
+        />
+      )}
+    </div>
   );
 }

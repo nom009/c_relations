@@ -1,41 +1,31 @@
 // ============================================================================
-// 自動レイアウト（§2.5）: 左→右 DAG。
-// - dagreLayout: 表示中サブグラフ（数百）をメインスレッド同期で整列。
-// - runFullLayout: 4,000ノード全体を Web Worker で非同期整列（UIをブロックしない）。
-//   Worker 生成不可の環境ではメインスレッド fallback。
+// 全体自動レイアウト（§2.5）: 4,000ノード全体を Web Worker で非同期整列（UIをブロックしない）。
+// Worker 生成不可の環境ではメインスレッド fallback（dagre は初期バンドルに含めず遅延ロード）。
+// 表示中サブグラフの同期整列は dagreCore.dagreLayout。
 // ============================================================================
-import { layoutPositions, type PosMap } from './dagreCore';
-import type { VisibleNode, VisibleEdge } from '../domain';
+import type { PosMap } from './dagreCore';
 
 export type { PosMap };
 
-export function dagreLayout(nodes: VisibleNode[], edges: VisibleEdge[]): PosMap {
-  return layoutPositions(
-    nodes.map((n) => n.id),
-    edges.map((e) => [e.source, e.target] as const),
-  );
-}
+const fallback = (nodeIds: string[], edges: [string, string][]) =>
+  import('./dagreCore').then((m) => m.layoutPositions(nodeIds, edges));
 
 // 全体整列（Worker）。id 配列とエッジのペア配列を渡す。
 export function runFullLayout(nodeIds: string[], edges: [string, string][]): Promise<PosMap> {
+  let worker: Worker;
+  try {
+    worker = new Worker(new URL('./fullLayout.worker.ts', import.meta.url), { type: 'module' });
+  } catch {
+    return fallback(nodeIds, edges);
+  }
   return new Promise((resolve) => {
-    let worker: Worker | null = null;
-    try {
-      worker = new Worker(new URL('./fullLayout.worker.ts', import.meta.url), { type: 'module' });
-    } catch {
-      worker = null;
-    }
-    if (!worker) {
-      resolve(layoutPositions(nodeIds, edges));
-      return;
-    }
     worker.onmessage = (e: MessageEvent<{ pos: PosMap }>) => {
       resolve(e.data.pos);
-      worker!.terminate();
+      worker.terminate();
     };
     worker.onerror = () => {
-      resolve(layoutPositions(nodeIds, edges));
-      worker!.terminate();
+      worker.terminate();
+      resolve(fallback(nodeIds, edges));
     };
     worker.postMessage({ nodeIds, edges });
   });

@@ -1,5 +1,6 @@
 // 左→右 DAG の dagre レイアウト本体（§2.5）。DOM 非依存＝メインスレッドと Worker で共用。
 import * as dagreNS from '@dagrejs/dagre';
+import type { VisibleNode, VisibleEdge } from '../domain';
 
 const dagre: typeof import('@dagrejs/dagre') = (dagreNS as any).default || dagreNS;
 
@@ -21,4 +22,12 @@ export function layoutPositions(nodeIds: Iterable<string>, edges: Iterable<reado
     pos[id] = { x: nn.x - NODE_W / 2, y: nn.y - NODE_H / 2 };
   }
   return pos;
+}
+
+// 表示中サブグラフ（数百）をメインスレッド同期で整列。
+export function dagreLayout(nodes: VisibleNode[], edges: VisibleEdge[]): PosMap {
+  return layoutPositions(
+    nodes.map((n) => n.id),
+    edges.map((e) => [e.source, e.target] as const),
+  );
 }

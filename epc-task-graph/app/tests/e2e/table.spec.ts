@@ -230,6 +230,11 @@ test("テーブル: 複数選択と一括操作（一括ステータス・一括
   const rowA = page.locator(`.trow[data-id="${ids[0]}"]`);
   const rowB = page.locator(`.trow[data-id="${ids[1]}"]`);
   const rowC = page.locator(`.trow[data-id="${ids[2]}"]`);
+  // 表は仮想化されており WBS '99' は末尾のため、最下部までスクロールして描画させる。
+  await page
+    .getByTestId("table-scroll")
+    .evaluate((el) => (el.scrollTop = el.scrollHeight));
+  await expect(rowC).toBeVisible();
 
   // 単一選択では一括バーは出ない。
   await rowA.click();

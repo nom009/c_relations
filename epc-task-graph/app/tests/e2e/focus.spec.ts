@@ -46,6 +46,16 @@ test("関係ハイライト: 近傍にリング＋世代バッジ、非近傍は
 
   // フォーカスバー（ハイライトが on）
   await expect(page.locator(".focusbar")).toBeVisible();
+  // フォーカス切替後の自動 fitView（4000件ではズーム<0.4＝LOD描画）が終わってから起点へ寄せる。
+  await page.waitForTimeout(800);
+  await expect
+    .poll(async () => {
+      await page.evaluate(() =>
+        (window as any).__APP.getState().runners.centerSelected?.(),
+      );
+      return page.locator(".task-node.origin").count();
+    })
+    .toBeGreaterThan(0);
   // 近傍タスクにリング（.related）＋世代バッジ、起点バッジ
   await expect
     .poll(async () => await page.locator(".task-node.related").count())

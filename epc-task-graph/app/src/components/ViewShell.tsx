@@ -6,6 +6,7 @@ import { Icon } from "./workspace/Icon";
 // 選択・フィルタ・折り畳みはストア共有状態なので「同期は基本なにもしない」で成立する。
 // ============================================================================
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ReactFlowProvider } from "@xyflow/react";
 import { useApp } from "../store/store";
 import {
   isFilterActive,
@@ -280,7 +281,9 @@ export function ViewShell() {
           className="view-pane"
           style={{ display: activeView === "graph" ? "flex" : "none" }}
         >
-          <CanvasArea />
+          <ReactFlowProvider>
+            <CanvasArea />
+          </ReactFlowProvider>
         </div>
         <div
           className="view-pane"
