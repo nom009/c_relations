@@ -3,6 +3,7 @@
 // スキーマ必須フィールド（rev/updatedBy/timestamp 等）が漏れなく埋まる。UI非依存の純関数。
 // ============================================================================
 import type { Calendar, Dependency, GraphDoc, Task } from './types';
+import { CURRENT_SCHEMA_VERSION } from './migrate';
 
 // 一意 ID。crypto.randomUUID があれば使い、無い環境（古い実行系）は乱数＋時刻で代替。
 export function newId(): string {
@@ -104,7 +105,7 @@ export function cloneDocWithNewIds(src: GraphDoc, newName: string): GraphDoc {
 export function emptyDoc(name = '新規プロジェクト'): GraphDoc {
   const ts = nowISO();
   return {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     project: {
       id: newId(),
       name,

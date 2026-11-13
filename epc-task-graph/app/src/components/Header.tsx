@@ -5,8 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { useApp, selectActiveCalendar, flushPersistence } from "../store/store";
 import { selectCpm } from "../store/selectors";
+import { downloadJson } from "../store/backup";
 import { useSelectedTask } from "../store/hooks";
-import { validateDoc, parseDoc, cloneDocWithNewIds, wbsPath, toMspdi, fromMspdi, emptyDoc } from "../domain";
+import { validateDoc, parseDoc, cloneDocWithNewIds, wbsPath, toMspdi, fromMspdi, emptyDoc, migrateDoc, repairDoc } from "../domain";
 
 // データ入出力メニュー（ツールバー整理・§1.3）: JSON/MSPDI の出力・取込を1つのドロップダウンに集約。
 function DataMenu({
@@ -241,22 +242,22 @@ export function Header({
     reader.readAsText(file);
   };
 
-  const doExport = () => {
-    const doc = useApp.getState().toDoc();
-    const blob = new Blob([JSON.stringify(doc, null, 2)], {
-      type: "application/json",
-    });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${doc.project.name}-${new Date().toISOString().slice(0, 10)}.epcgraph.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  };
+  const doExport = () => downloadJson(useApp.getState().toDoc());
   const doImport = (file: File) => {
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        const raw = JSON.parse(reader.result as string);
+        const parsedJson = JSON.parse(reader.result as string);
+        let raw: unknown;
+        try {
+          const m = migrateDoc(parsedJson);
+          raw = repairDoc(m.doc).doc;
+        } catch (e) {
+          useApp
+            .getState()
+            .showToast(e instanceof Error ? e.message : "移行に失敗しました", true);
+          return;
+        }
         const v = validateDoc(raw);
         if (!v.ok) {
           useApp
@@ -268,7 +269,8 @@ export function Header({
           return;
         }
         // 既存プロジェクトの行を上書きしないよう、常に新規IDの別プロジェクトとして取り込む。
-        const doc = cloneDocWithNewIds(parseDoc(raw)!, raw.project.name);
+        const parsed = parseDoc(raw)!;
+        const doc = cloneDocWithNewIds(parsed, parsed.project.name);
         // 未保存の編集を失わないよう、保存に失敗したら取込を中止する（失敗の通知は flushPersistence が出す）。
         if (!(await flushPersistence().then(() => true, () => false))) return;
         useApp.getState().loadDoc(doc);

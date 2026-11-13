@@ -10,5 +10,7 @@ export * from './deriveTableRows';
 export * from './cpm';
 export * from './schema';
 export * from './validate';
+export * from './migrate';
+export * from './repair';
 export * from './seed';
 export * from './mspdi';

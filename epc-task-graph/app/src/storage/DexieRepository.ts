@@ -10,6 +10,9 @@ import Dexie, { type Table } from 'dexie';
 import {
   cloneDocWithNewIds,
   defaultCalendar,
+  migrateDoc,
+  repairDoc,
+  validateDoc,
   type Calendar,
   type Dependency,
   type GraphDoc,
@@ -18,12 +21,13 @@ import {
   type Task,
   type ViewState,
 } from '../domain';
-import type {
-  GraphPatch,
-  GraphRepository,
-  PatchResult,
-  RowConflict,
-  SnapshotMeta,
+import {
+  CorruptDocError,
+  type GraphPatch,
+  type GraphRepository,
+  type PatchResult,
+  type RowConflict,
+  type SnapshotMeta,
 } from './GraphRepository';
 
 // プロジェクトのメタ行（tasks/deps は別テーブル。§5.3 の projects 相当＋周辺JSON）。
@@ -73,6 +77,16 @@ function stripProjectRow(row: ProjectRow): ProjectMeta {
   return { id, name, description, calendarId, dataDate, createdAt, updatedAt, version };
 }
 
+// 移行→修復→検証。不正なら CorruptDocError（doc は移行・修復済み・未検証）。
+function migrateAndValidate(raw: GraphDoc): { doc: GraphDoc; migrated: boolean; repaired: boolean } {
+  const m = migrateDoc(raw);
+  const r = repairDoc(m.doc);
+  const doc = r.doc as GraphDoc;
+  const v = validateDoc(doc);
+  if (!v.ok) throw new CorruptDocError(v.errors, doc);
+  return { doc, migrated: m.migrated, repaired: r.repaired };
+}
+
 function docToRows(doc: GraphDoc): { project: ProjectRow; tasks: TaskRow[]; deps: DepRow[] } {
   const pid = doc.project.id;
   return {
@@ -97,6 +111,18 @@ export class DexieRepository implements GraphRepository {
   }
 
   async loadGraph(projectId: string): Promise<GraphDoc> {
+    const raw = await this.readDoc(projectId);
+    const { doc, migrated, repaired } = migrateAndValidate(raw);
+    if (migrated || repaired) {
+      // 移行/修復後の形式を行にも反映する（savePatch は schemaVersion を更新しないため）。元の形も履歴に残す。
+      await this.snapshot(raw, migrated ? 'pre-migration' : 'pre-repair');
+      await this.saveGraph(doc);
+    }
+    return doc;
+  }
+
+  // 行から GraphDoc を組み立てるだけ（移行・検証なし）。スナップショット採取にも使う。
+  private async readDoc(projectId: string): Promise<GraphDoc> {
     const p = await this.db.projects.get(projectId);
     if (!p) throw new Error(`project not found: ${projectId}`);
     const [tasks, deps] = await Promise.all([
@@ -207,7 +233,7 @@ export class DexieRepository implements GraphRepository {
     try {
       const last = await this.db.snapshots.where('projectId').equals(pid).reverse().first();
       const stale = !last || Date.now() - Date.parse(last.createdAt) >= AUTOSAVE_SNAPSHOT_INTERVAL_MS;
-      if (stale) await this.snapshot(await this.loadGraph(pid), 'autosave');
+      if (stale) await this.snapshot(await this.readDoc(pid), 'autosave');
     } catch {
       /* スナップショット失敗は保存本体を妨げない */
     }
@@ -251,8 +277,10 @@ export class DexieRepository implements GraphRepository {
   async restoreSnapshot(projectId: string, seq: number): Promise<GraphDoc> {
     const row = await this.db.snapshots.get(seq);
     if (!row || row.projectId !== projectId) throw new Error('snapshot not found');
-    await this.saveGraph(row.doc);
-    return row.doc;
+    // 壊れた履歴で現在のデータを上書きしないよう、検証に通ったものだけ保存する。
+    const { doc } = migrateAndValidate(row.doc);
+    await this.saveGraph(doc);
+    return doc;
   }
 
   // ---- 内部: 全量スナップショットを追加し、古い物を5世代に剪定 ----

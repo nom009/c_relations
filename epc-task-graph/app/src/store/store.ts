@@ -38,8 +38,11 @@ import {
   allTopPrefixes,
   emptyDoc,
   wbsPath,
+  NewerSchemaError,
 } from "../domain";
 import { runFullLayout } from "../layout/layout";
+import { CorruptDocError } from "../storage/GraphRepository";
+import { backupReminderMessage, downloadJson, requestPersistentStorage } from "./backup";
 import {
   getCurrentProjectId,
   getRepo,
@@ -399,11 +402,60 @@ function restoreHistory(direction: "undo" | "redo") {
   scheduleSave();
 }
 
+// 読込時に不整合（CorruptDocError）を検出したら、新しい履歴から順に復元を試みる。
+// どれも使えなければ、ユーザーのデータを塞がないよう未検証のまま開いて警告する。
+// 復元は現在のデータを上書きするため、直前の未検証データをファイルに退避してから行う。
+// notified: 呼び出し側が他の通知（バックアップ促し等）を重ねる必要がないよう、トーストを出したか返す。
+async function loadGraphWithRecovery(id: string): Promise<{ doc: GraphDoc; notified: boolean }> {
+  const repo = getRepo();
+  try {
+    return { doc: await repo.loadGraph(id), notified: false };
+  } catch (err) {
+    if (!(err instanceof CorruptDocError)) throw err;
+    let saved = false;
+    try {
+      const snaps = await repo.listSnapshots(id);
+      if (snaps.length) {
+        try {
+          downloadJson(err.doc, { recordBackup: false, suffix: "broken" });
+          saved = true;
+        } catch {
+          /* 退避に失敗しても復元自体は続行する */
+        }
+      }
+      for (const snap of snaps) {
+        try {
+          const doc = await repo.restoreSnapshot(id, snap.seq);
+          useApp
+            .getState()
+            .showToast(
+              `保存データの不整合を検出したため、${new Date(snap.createdAt).toLocaleString()}の履歴から復元しました` +
+                (saved ? "（復元前のデータはファイルに保存しました）" : ""),
+            );
+          return { doc, notified: true };
+        } catch {
+          /* この履歴も使えない。次に新しい履歴へ */
+        }
+      }
+    } catch {
+      /* 履歴を読めない場合も未検証のデータで続行する */
+    }
+    useApp
+      .getState()
+      .showToast(
+        `保存データに不整合があります（${err.errors[0] ?? "不明"}）。JSONエクスポートでバックアップしてください`,
+        true,
+      );
+    return { doc: err.doc, notified: true };
+  }
+}
+
 // 起動時: まず starter を同期表示 → Dexie から現在プロジェクトへ非同期ハイドレート（§6.1）。
 // 空DBの初回は「現在の starter を初回プロジェクトとして保存」するだけで loadDoc しない
 // （同期表示済みの state をクロバーしない）。既存プロジェクトがある時のみ読み込んで差し替える。
 export async function bootstrapStore(): Promise<void> {
   hydrating = true;
+  requestPersistentStorage();
   try {
     const repo = getRepo();
     const list = await repo.listProjects();
@@ -415,16 +467,20 @@ export async function bootstrapStore(): Promise<void> {
       const cur = getCurrentProjectId();
       const targetId = cur && list.some((p) => p.id === cur) ? cur : list[0].id;
       setCurrentProjectId(targetId);
-      const doc = await repo.loadGraph(targetId);
+      const { doc, notified } = await loadGraphWithRecovery(targetId);
       useApp.getState().loadDoc(doc, { persist: false });
+      const reminder = notified ? null : backupReminderMessage(list);
+      if (reminder) useApp.getState().showToast(reminder);
     }
     await useApp.getState().refreshProjects();
-  } catch {
+  } catch (err) {
     useApp.setState({ saveStatus: "error" });
     useApp
       .getState()
       .showToast(
-        "保存領域を開けませんでした。ブラウザの設定を確認してください。",
+        err instanceof NewerSchemaError
+          ? err.message
+          : "保存領域を開けませんでした。ブラウザの設定を確認してください。",
         true,
       );
   } finally {
@@ -1231,12 +1287,12 @@ export const useApp = create<AppState>()(
       switchProject: async (id) => {
         try {
           await flushPersistence();
-          const doc = await getRepo().loadGraph(id);
+          const { doc, notified } = await loadGraphWithRecovery(id);
           await flushPersistence(); // 読込中の編集を旧プロジェクトへ吐き出してから差し替える
           setCurrentProjectId(id);
           get().loadDoc(doc, { persist: false });
           get().fit(200);
-          get().showToast("プロジェクトを切り替えました: " + doc.project.name);
+          if (!notified) get().showToast("プロジェクトを切り替えました: " + doc.project.name);
         } catch {
           get().showToast("プロジェクトの読込に失敗しました", true);
         }

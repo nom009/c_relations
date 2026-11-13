@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./components/App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useApp, bootstrapStore, flushPersistence } from "./store/store";
 import "./styles.css";
 
@@ -27,7 +28,9 @@ void bootstrapStore().then(() => {
     (window as unknown as { __APP: typeof useApp }).__APP = useApp;
   root.render(
     <StrictMode>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </StrictMode>,
   );
 });

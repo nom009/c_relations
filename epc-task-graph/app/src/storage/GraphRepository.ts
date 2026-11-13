@@ -54,6 +54,17 @@ export interface SnapshotMeta {
   taskCount: number;
 }
 
+// 読込時の検証に失敗した保存データ。doc は未検証のまま（呼び出し側が最終手段として使える）。
+export class CorruptDocError extends Error {
+  constructor(
+    public readonly errors: string[],
+    public readonly doc: GraphDoc,
+  ) {
+    super('保存データの検証に失敗しました: ' + errors.slice(0, 2).join(' / '));
+    this.name = 'CorruptDocError';
+  }
+}
+
 export interface GraphRepository {
   listProjects(): Promise<ProjectMeta[]>;
   loadGraph(projectId: string): Promise<GraphDoc>;

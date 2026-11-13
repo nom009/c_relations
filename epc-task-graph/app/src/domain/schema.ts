@@ -5,7 +5,7 @@
 import { z } from 'zod';
 
 // 所要日数・ラグの上限（約100年）。CPM の稼働日ループが暴走しないよう取込時に制限する。
-const MAX_DAYS = 36500;
+export const MAX_DAYS = 36500;
 
 export function isValidIsoDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
