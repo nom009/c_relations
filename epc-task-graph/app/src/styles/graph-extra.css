@@ -387,77 +387,171 @@
 .canvas-area.connect-mode .react-flow__pane {
   cursor: crosshair;
 }
-/* つなぐモードの始点ノード: 通電待ちのリング（脈動） */
+/* ---- 接続エフェクト「魔術回路」: 放電する接続線＋両端ノードに走る発光回路 ---- */
+/* つなぐモードの始点ノード: 回路が起動待ちで脈動 */
 .task-node.connect-src,
 .lod-node.connect-src {
-  outline: 2px solid #22d3ee;
+  outline: 2px solid #34f5b0;
   outline-offset: 2px;
   animation: connectPulse 1.1s ease-in-out infinite;
 }
 @keyframes connectPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.5); }
-  50% { box-shadow: 0 0 0 6px rgba(34, 211, 238, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(52, 245, 176, 0.55); }
+  50% { box-shadow: 0 0 0 6px rgba(52, 245, 176, 0), 0 0 14px 2px rgba(52, 245, 176, 0.45); }
 }
 
-/* 接続の瞬間、起点で電撃が弾ける（閃光＋衝撃波リングが2枚ぶわっと拡がる） */
-.task-node.burst,
-.lod-node.burst {
+/* 放電（接続直後のエッジ・ドラッグ中の接続線で共用） */
+.circuit-fx {
+  pointer-events: none;
+}
+.circuit-fx path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cfx-glow {
+  stroke: rgba(52, 245, 176, 0.35);
+  stroke-width: 10;
+  filter: blur(3px);
+}
+.cfx-arc {
+  stroke: #a7ffe0;
+  stroke-width: 1.6;
+  filter: drop-shadow(0 0 3px #34f5b0) drop-shadow(0 0 7px rgba(52, 245, 176, 0.8));
+}
+.cfx-arc.thin {
+  stroke-width: 0.9;
+  opacity: 0.75;
+}
+.cfx-core {
+  stroke: #f0fff9;
+  stroke-width: 1.3;
+}
+/* 起点→終点へ流れる光（2回） */
+.cfx-pulse {
+  stroke: #fff;
+  stroke-width: 4;
+  stroke-dasharray: 0.12 1;
+  stroke-dashoffset: 0.12;
+  filter: drop-shadow(0 0 5px #34f5b0) drop-shadow(0 0 12px #34f5b0);
+  animation: cfxPulse 0.42s cubic-bezier(0.5, 0, 0.6, 1) 0.06s 2 both;
+}
+@keyframes cfxPulse {
+  from { stroke-dashoffset: 0.12; }
+  to { stroke-dashoffset: -1; }
+}
+.react-flow__edge.energized .react-flow__edge-path {
+  stroke: #10b981 !important;
+  stroke-width: 2 !important;
+}
+.react-flow__edge.energized .circuit-fx {
+  animation: cfxLife 1.25s ease-out forwards;
+}
+@keyframes cfxLife {
+  0% { opacity: 0; }
+  6%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.circuit-line .cfx-glow {
+  stroke: rgba(52, 245, 176, 0.22);
+}
+.circuit-line.valid .cfx-glow {
+  stroke: rgba(52, 245, 176, 0.45);
+  stroke-width: 14;
+}
+
+/* 両端ノード: 起点（out）は即座に、終点（in）は光が届く頃に発光し、基板配線状の回路が走る */
+.task-node.burst-out,
+.task-node.burst-in,
+.lod-node.burst-out,
+.lod-node.burst-in {
   z-index: 12;
-  animation: burstFlash 0.3s ease-out;
 }
-@keyframes burstFlash {
-  0% {
-    box-shadow:
-      0 0 0 2px #22d3ee,
-      0 0 22px 6px rgba(34, 211, 238, 0.95),
-      0 0 40px 14px rgba(103, 232, 249, 0.6);
-    filter: brightness(1.4);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0);
-    filter: brightness(1);
-  }
+.lod-node {
+  position: relative;
 }
-/* 衝撃波リング（弾ける）: ::before/::after を2枚、時間差で拡大しながら消える */
-.task-node.burst::before,
-.task-node.burst::after,
-.lod-node.burst::before,
-.lod-node.burst::after {
+.task-node.burst-out::after,
+.task-node.burst-in::after,
+.lod-node.burst-out::after,
+.lod-node.burst-in::after {
   content: '';
   position: absolute;
-  inset: -3px;
+  inset: -2px;
   border-radius: inherit;
-  border: 2px solid #22d3ee;
   pointer-events: none;
-  animation: burstRing 0.6s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+  animation: circuitFlash 0.95s ease-out both;
 }
-.task-node.burst::before {
-  border-radius: 10px;
+.task-node.burst-in::after,
+.lod-node.burst-in::after {
+  animation-delay: 0.42s;
 }
-.task-node.burst::after,
-.lod-node.burst::after {
-  animation-delay: 0.11s;
-  border-color: #a5f3fc;
-}
-@keyframes burstRing {
+@keyframes circuitFlash {
   0% {
-    transform: scale(1);
-    opacity: 0.95;
+    opacity: 1;
+    box-shadow:
+      0 0 0 1.5px #34f5b0,
+      0 0 18px 4px rgba(52, 245, 176, 0.9),
+      0 0 38px 12px rgba(16, 185, 129, 0.45);
   }
   100% {
-    transform: scale(2);
     opacity: 0;
+    box-shadow: 0 0 0 0 rgba(52, 245, 176, 0);
   }
 }
-
-/* 通電エフェクト: 接続直後のエッジに電撃（電流が流れる＋発光） */
-.react-flow__edge.energized .react-flow__edge-path {
-  stroke: #22d3ee !important;
-  stroke-width: 3 !important;
-  stroke-dasharray: 8 6;
-  filter: drop-shadow(0 0 4px #22d3ee) drop-shadow(0 0 9px rgba(34, 211, 238, 0.7));
-  animation: energize 0.28s linear infinite;
+.circuit-trace {
+  --base: 0ms;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 3;
+  animation: ctLife 1.05s ease-out var(--base) both;
 }
-@keyframes energize {
-  to { stroke-dashoffset: -28; }
+.circuit-trace.in {
+  --base: 420ms;
+}
+@keyframes ctLife {
+  0%, 65% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.ct-shade {
+  fill: #052e22;
+  animation: ctShade 1.05s ease-out var(--base) both;
+}
+@keyframes ctShade {
+  0% { opacity: 0; }
+  15% { opacity: 0.5; }
+  60% { opacity: 0.38; }
+  100% { opacity: 0; }
+}
+.ct-line {
+  fill: none;
+  stroke: #7dffd0;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  filter: drop-shadow(0 0 2px #34f5b0) drop-shadow(0 0 5px rgba(52, 245, 176, 0.9));
+  animation: ctDraw 0.3s cubic-bezier(0.3, 0, 0.4, 1) calc(var(--base) + var(--d)) both;
+}
+@keyframes ctDraw {
+  to { stroke-dashoffset: 0; }
+}
+.ct-pad {
+  fill: #eafff6;
+  filter: drop-shadow(0 0 3px #34f5b0);
+  animation: ctPad 0.25s ease-out calc(var(--base) + var(--d) + 260ms) both;
+}
+@keyframes ctPad {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cfx-pulse,
+  .circuit-trace {
+    display: none;
+  }
 }

@@ -7,6 +7,7 @@ import { Handle, Position, useStore as useRFStore, type NodeProps } from '@xyflo
 import { DISC_COLOR } from '../adapters/reactflow';
 import { DISC_COLOR_ON, type VisibleAggregateNode, type VisibleTaskNode } from '../domain';
 import { useApp } from '../store/store';
+import { CircuitTrace } from './circuitFx';
 
 export const TaskNode = memo(function TaskNode({ id, data }: NodeProps) {
   const n = (data as { n: VisibleTaskNode }).n;
@@ -15,7 +16,8 @@ export const TaskNode = memo(function TaskNode({ id, data }: NodeProps) {
   const editing = useApp((s) => s.editingId === id);
   const selected = useApp((s) => s.selection.taskId === id);
   const connectSrc = useApp((s) => s.connectSource === id); // つなぐモードの始点
-  const burst = useApp((s) => s.burstSource === id); // 接続の瞬間、起点で電撃が弾ける
+  // 接続の瞬間、起点（out）→終点（in）の順に回路が走る
+  const burst = useApp((s) => (s.burst?.source === id ? 'out' : s.burst?.target === id ? 'in' : null));
   const lod = zoom < 0.4;
   const color = DISC_COLOR[t.discipline] || DISC_COLOR.OTHER;
 
@@ -27,7 +29,7 @@ export const TaskNode = memo(function TaskNode({ id, data }: NodeProps) {
           (n.critical ? ' critical' : '') +
           (n.related ? ' related' : '') +
           (connectSrc ? ' connect-src' : '') +
-          (burst ? ' burst' : '')
+          (burst ? ' burst-' + burst : '')
         }
         style={{ background: color, opacity: n.dim ? 0.18 : n.outside ? 0.5 : 1 }}
       >
@@ -46,7 +48,7 @@ export const TaskNode = memo(function TaskNode({ id, data }: NodeProps) {
     n.related ? 'related' : '',
     n.critical ? 'critical' : '',
     connectSrc ? 'connect-src' : '',
-    burst ? 'burst' : '',
+    burst ? 'burst-' + burst : '',
     selected ? 'sel' : '',
   ]
     .filter(Boolean)
@@ -99,6 +101,7 @@ export const TaskNode = memo(function TaskNode({ id, data }: NodeProps) {
           <i style={{ width: t.progress + '%' }} />
         </div>
       ) : null}
+      {burst ? <CircuitTrace seed={id} dir={burst} /> : null}
       <Handle type="source" position={Position.Right} />
     </div>
   );

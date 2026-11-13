@@ -31,6 +31,7 @@ import { dagreLayout } from '../layout/dagreCore';
 import { useApp, explainReject, nameOf } from '../store/store';
 import { useCpm, useVisibleGraph } from '../store/hooks';
 import { nodeTypes } from './nodes';
+import { CircuitConnectionLine, edgeTypes } from './circuitFx';
 import { isShortcutBlocked } from './keyboard';
 
 // 俯瞰グリッド整列（§2.10/デザイン刷新）: 表示がすべて集約ノード（＝WBS群の俯瞰）のとき、
@@ -173,7 +174,7 @@ export function CanvasArea() {
         n.delete(lastConnected.id);
         return n;
       });
-    }, 950);
+    }, 1300);
     return () => clearTimeout(t);
   }, [lastConnected]);
 
@@ -421,6 +422,8 @@ export function CanvasArea() {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        connectionLineComponent={CircuitConnectionLine}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeDragStop={onNodeDragStop}

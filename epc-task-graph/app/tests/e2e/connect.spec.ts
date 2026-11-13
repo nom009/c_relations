@@ -59,9 +59,12 @@ test("つなぐモード: クリックで接続→通電エフェクト→もう
 
   // 通電エフェクト: energized エッジが一時的に現れる。
   await expect(page.locator(".react-flow__edge.energized")).toHaveCount(1);
-  // 起点で電撃が弾ける: burstSource が起点(A)にセットされる（一瞬）。
+  // 起点で回路が走る: burst が A→B にセットされる（一瞬）。
   const burst = await page.evaluate(
-    (p) => (window as any).__APP.getState().burstSource === p[0],
+    (p) => {
+      const b = (window as any).__APP.getState().burst;
+      return b?.source === p[0] && b?.target === p[1];
+    },
     ids,
   );
   expect(burst).toBe(true);

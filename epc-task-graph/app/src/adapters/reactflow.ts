@@ -19,26 +19,29 @@ export function toRFNodes(vnodes: VisibleNode[]): Node<RFNodeData>[] {
   }));
 }
 
-// energized: 直前に「つなぐ」で接続したエッジの realId 集合。通電エフェクト用に className を付す。
+// energized: 直前に「つなぐ」で接続したエッジの realId 集合。回路エフェクト（circuit エッジ）で描く。
 export function toRFEdges(vedges: VisibleEdge[], energized?: Set<string> | null): Edge[] {
-  return vedges.map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    type: 'smoothstep',
-    deletable: !e.aggregate,
-    data: { realId: e.realId, aggregate: e.aggregate },
-    className: energized && (energized.has(e.realId ?? '') || energized.has(e.id)) ? 'energized' : undefined,
-    label: e.aggregate && e.count > 1 ? String(e.count) : undefined,
-    // クリティカル（駆動依存）は赤系太線で最優先強調（§2.11）。次いでフォーカス強調。
-    style: e.critical
-      ? { stroke: '#dc2626', strokeWidth: 3 }
-      : e.highlight
-        ? { stroke: '#f97316', strokeWidth: 2.4 }
-        : e.aggregate
-          ? { stroke: '#94a3b8', strokeDasharray: '6 4' }
-          : { stroke: '#64748b' },
-  }));
+  return vedges.map((e) => {
+    const hot = !!energized && (energized.has(e.realId ?? '') || energized.has(e.id));
+    return {
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      type: hot ? 'circuit' : 'smoothstep',
+      deletable: !e.aggregate,
+      data: { realId: e.realId, aggregate: e.aggregate },
+      className: hot ? 'energized' : undefined,
+      label: e.aggregate && e.count > 1 ? String(e.count) : undefined,
+      // クリティカル（駆動依存）は赤系太線で最優先強調（§2.11）。次いでフォーカス強調。
+      style: e.critical
+        ? { stroke: '#dc2626', strokeWidth: 3 }
+        : e.highlight
+          ? { stroke: '#f97316', strokeWidth: 2.4 }
+          : e.aggregate
+            ? { stroke: '#94a3b8', strokeDasharray: '6 4' }
+            : { stroke: '#64748b' },
+    };
+  });
 }
 
 export { DISC_COLOR };
