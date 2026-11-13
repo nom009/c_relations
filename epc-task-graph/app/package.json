@@ -11,7 +11,8 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:api": "playwright test -c playwright.api.config.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",

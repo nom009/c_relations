@@ -337,8 +337,9 @@ interface GraphDoc {
 
 - **MSPDI 拡張**：リソース（担当）・カレンダー・実績のマッピング。
 - **CSV 取込**：Excel からの実データ投入（実運用の最後の障壁）。
-- **Azure 本番化**：SWA + Functions + Azure SQL + Entra ID。ApiRepository を Repository 抽象に差す。
-- **複数人編集 L1/L2**：楽観ロック（行 `rev`）＋ポーリング通知。衝突ダイアログ。
+- **Azure 本番化**（実装済み・`VITE_STORAGE=api` のビルド）：SWA + Functions + Azure SQL + Entra ID。ApiRepository を Repository 抽象に差す。
+  権限はプロジェクト単位（owner/editor/viewer）。API 契約は `app/src/storage/apiContract.ts`、手順は `docs/azure-deployment.md`。
+- **複数人編集 L1/L2**（実装済み）：楽観ロック（行 `rev`）＋ポーリング通知（10秒）。衝突ダイアログ。
   L3（Yjs＋Web PubSub のリアルタイム）は「同一WBSの高頻度同時編集による衝突が実測で頻発」した時のみ着手。
 - **実データ検証**：WBSコード体系が実プロジェクトで崩れる場合は、折り畳み単位を工種×エリアへフォールバック。
 

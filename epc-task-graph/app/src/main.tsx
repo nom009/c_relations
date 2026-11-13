@@ -5,6 +5,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { WriterLockOverlay } from "./components/WriterLockOverlay";
 import { useApp, bootstrapStore, flushPersistence } from "./store/store";
 import { acquireWriterLock, isWriterTab } from "./store/writerLock";
+import { API_MODE } from "./storage/mode";
 import "./styles.css";
 
 const root = createRoot(document.getElementById("root")!);
@@ -26,7 +27,28 @@ async function start() {
     overlayTimer = setTimeout(() => root.render(<WriterLockOverlay />), OVERLAY_DELAY_MS);
   });
   clearTimeout(overlayTimer);
+  // サーバー版のみ: 同期層を読み込み、ログイン確認（未ログインならログイン画面へ遷移してエディタは出さない）。
+  let startSync: (() => void) | null = null;
+  if (API_MODE) {
+    const sync = await import("./store/apiSync");
+    try {
+      if (!(await sync.initApiSession())) return;
+    } catch {
+      root.render(
+        <div className="app-loading" role="alert">
+          <span>C-Relations</span>
+          <p>サーバーに接続できません。接続を確認して再読み込みしてください。</p>
+          <button className="btn" onClick={() => window.location.reload()}>
+            再読み込み
+          </button>
+        </div>,
+      );
+      return;
+    }
+    startSync = sync.startApiSync;
+  }
   await bootstrapStore();
+  startSync?.();
   // タブを隠す/閉じる時点でデバウンス待ちの差分を即書き出す（閉じた直後の編集を失わない）。
   const flushNow = () => {
     if (isWriterTab()) void flushPersistence().catch(() => undefined);

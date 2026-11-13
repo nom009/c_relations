@@ -31,7 +31,7 @@ export default defineConfig(
   },
   {
     // ストア定義自身とテストは setState を正当に使う。
-    files: ['src/store/store.ts', 'tests/**/*.{ts,tsx}'],
+    files: ['src/store/store.ts', 'src/store/apiSync.ts', 'tests/**/*.{ts,tsx}'],
     rules: { 'no-restricted-syntax': 'off' },
   },
 );

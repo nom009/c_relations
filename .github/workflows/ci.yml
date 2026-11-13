@@ -69,10 +69,81 @@ jobs:
           path: epc-task-graph/app/test-results
           retention-days: 7
 
+  api:
+    name: API typecheck, tests (incl. SQL Server) and bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: epc-task-graph/api
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Ci-Only-Passw0rd!
+        ports: ["1433:1433"]
+    env:
+      MSSQL_TEST_CONNECTION: Server=localhost,1433;Database=epc_test;User Id=sa;Password=Ci-Only-Passw0rd!;Encrypt=true;TrustServerCertificate=true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: epc-task-graph/api/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Create test database
+        run: |
+          for i in $(seq 1 60); do
+            docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Ci-Only-Passw0rd!' -C -Q "IF DB_ID('epc_test') IS NULL CREATE DATABASE epc_test" && exit 0
+            sleep 2
+          done
+          exit 1
+      - name: Run tests
+        run: npm test
+      - name: Package for Azure Functions (same as deploy)
+        run: |
+          npm run package:deploy
+          cd ../api-deploy && npm install --omit=dev --no-audit --no-fund
+          node -e "require('mssql'); require('fs').accessSync('dist/index.js'); require('fs').accessSync('host.json')"
+      - name: Validate Azure infrastructure template
+        working-directory: epc-task-graph/infra
+        run: az bicep build --file main.bicep --stdout > /dev/null
+
+  e2e-api:
+    name: E2E tests, server mode (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            epc-task-graph/app/package-lock.json
+            epc-task-graph/api/package-lock.json
+      - name: Install dependencies
+        run: npm ci && npm --prefix ../api ci
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Run E2E tests (server mode)
+        run: npx playwright test -c playwright.api.config.ts
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-api-results
+          path: epc-task-graph/app/test-results
+          retention-days: 7
+
   deploy:
     name: Deploy to GitHub Pages
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [test-and-build, e2e]
+    needs: [test-and-build, e2e, api, e2e-api]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -87,3 +158,54 @@ jobs:
       - uses: actions/configure-pages@v6
       - id: deployment
         uses: actions/deploy-pages@v5
+
+  deploy-azure:
+    # サーバー版（複数人編集）。AZURE_STATIC_WEB_APPS_API_TOKEN 未登録の間はスキップ（docs/azure-deployment.md）。
+    name: Deploy server edition to Azure Static Web Apps
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [test-and-build, e2e, api, e2e-api]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: azure-swa
+      cancel-in-progress: false
+    env:
+      SWA_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+    steps:
+      - name: Check configuration
+        run: |
+          if [ -z "$SWA_TOKEN" ]; then echo "::notice::Azure deploy skipped (secret AZURE_STATIC_WEB_APPS_API_TOKEN not set)"; fi
+          if [ -n "$SWA_TOKEN" ] && [ -z "$AZURE_TENANT_ID" ]; then echo "::error::variable AZURE_TENANT_ID is required"; exit 1; fi
+      - if: env.SWA_TOKEN != ''
+        uses: actions/checkout@v7
+      - if: env.SWA_TOKEN != ''
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            epc-task-graph/app/package-lock.json
+            epc-task-graph/api/package-lock.json
+      - name: Build app (server mode)
+        if: env.SWA_TOKEN != ''
+        run: |
+          npm ci
+          VITE_STORAGE=api npm run build
+          sed "s/__AZURE_TENANT_ID__/$AZURE_TENANT_ID/" ../swa/staticwebapp.config.json > dist/staticwebapp.config.json
+      - name: Build API
+        if: env.SWA_TOKEN != ''
+        working-directory: epc-task-graph/api
+        run: |
+          npm ci
+          npm run package:deploy
+          cd ../api-deploy && npm install --omit=dev --no-audit --no-fund
+      - if: env.SWA_TOKEN != ''
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ env.SWA_TOKEN }}
+          action: upload
+          app_location: epc-task-graph/app/dist
+          api_location: epc-task-graph/api-deploy
+          output_location: ""
+          skip_app_build: true
+          skip_api_build: true

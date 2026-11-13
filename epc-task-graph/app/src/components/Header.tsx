@@ -3,7 +3,8 @@ import { Icon } from "./workspace/Icon";
 //   デモ生成・Export/Import・保存状態。
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
-import { useApp, selectActiveCalendar, flushPersistence } from "../store/store";
+import { useApp, selectActiveCalendar, selectReadOnly, flushPersistence } from "../store/store";
+import { API_MODE } from "../storage/mode";
 import { selectCpm } from "../store/selectors";
 import { downloadJson } from "../store/backup";
 import { useSelectedTask } from "../store/hooks";
@@ -102,10 +103,13 @@ function ProjectBar() {
 function ActionsMenu({
   onNewProject,
   onSettings,
+  onMembers,
 }: {
   onNewProject?: () => void;
   onSettings?: () => void;
+  onMembers?: () => void;
 }) {
+  const role = useApp((s) => s.role);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -156,13 +160,16 @@ function ActionsMenu({
           <div className="menu-sep" />
           {item("新規プロジェクト", () => onNewProject?.())}
           {item("プロジェクト設定", () => onSettings?.())}
+          {API_MODE ? item("メンバー…", () => onMembers?.()) : null}
           {item("プロジェクトを複製", () =>
             useApp.getState().duplicateCurrentProject(),
           )}
-          {item("プロジェクトを削除…", () => {
-            if (confirm("このプロジェクトを削除しますか？（元に戻せません）"))
-              useApp.getState().deleteCurrentProject();
-          })}
+          {!API_MODE || role === "owner"
+            ? item("プロジェクトを削除…", () => {
+                if (confirm("このプロジェクトを削除しますか？（元に戻せません）"))
+                  useApp.getState().deleteCurrentProject();
+              })
+            : null}
           <div className="menu-sep" />
           {item("4,000ノード生成（デモ）", () =>
             useApp.getState().generateDemo(),
@@ -176,11 +183,15 @@ function ActionsMenu({
 export function Header({
   onNewProject,
   onSettings,
+  onMembers,
 }: {
   onNewProject?: () => void;
   onSettings?: () => void;
+  onMembers?: () => void;
 }) {
   const saveStatus = useApp((s) => s.saveStatus);
+  const readOnly = useApp(selectReadOnly);
+  const account = useApp((s) => s.account);
   // Undo/Redo 可否は zundo の temporal ストアから購読（§2.3）。
   const canUndo = useStore(useApp.temporal, (s) => s.pastStates.length > 0);
   const canRedo = useStore(useApp.temporal, (s) => s.futureStates.length > 0);
@@ -295,19 +306,29 @@ export function Header({
       <ProjectBar />
       <button
         className="btn"
-        disabled={!canUndo}
+        disabled={!canUndo || readOnly}
         onClick={() => useApp.getState().undo()}
       >
         ↶ 戻す
       </button>
       <button
         className="btn"
-        disabled={!canRedo}
+        disabled={!canRedo || readOnly}
         onClick={() => useApp.getState().redo()}
       >
         進む ↷
       </button>
+      {API_MODE && readOnly ? (
+        <span className="role-badge" data-testid="readonly-badge" title="このプロジェクトは閲覧のみ可能です">
+          閲覧のみ
+        </span>
+      ) : null}
       <span className="spacer" />
+      {API_MODE && account ? (
+        <span className="account-chip" data-testid="account-email" title="ログイン中のユーザー">
+          {account.email}
+        </span>
+      ) : null}
       <button
         className="icon-button header-search"
         aria-label="タスクを検索"
@@ -320,7 +341,7 @@ export function Header({
       >
         <Icon name="search" size={17} />
       </button>
-      <ActionsMenu onNewProject={onNewProject} onSettings={onSettings} />
+      <ActionsMenu onNewProject={onNewProject} onSettings={onSettings} onMembers={onMembers} />
       <DataMenu
         onJsonExport={doExport}
         onJsonImport={() => fileRef.current?.click()}
@@ -349,11 +370,19 @@ export function Header({
         }}
       />
       <span className={"savebadge " + saveStatus} data-testid="savebadge">
-        {saveStatus === "saved"
-          ? "このブラウザに保存済み"
-          : saveStatus === "error"
-            ? "保存できませんでした"
-            : "保存中…"}
+        {API_MODE
+          ? saveStatus === "saved"
+            ? "保存済み"
+            : saveStatus === "error"
+              ? "保存できません（再試行中）"
+              : saveStatus === "conflict"
+                ? "競合を確認してください"
+                : "保存中…"
+          : saveStatus === "saved"
+            ? "このブラウザに保存済み"
+            : saveStatus === "error"
+              ? "保存できませんでした"
+              : "保存中…"}
       </span>
     </header>
   );

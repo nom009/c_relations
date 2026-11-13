@@ -1,7 +1,8 @@
 import { TaskDialog } from "./workspace/TaskDialog";
 import { SettingsDialog } from "./workspace/SettingsDialog";
 import { lazy, Suspense, useEffect, useState } from "react";
-import { useApp } from "../store/store";
+import { useApp, selectReadOnly } from "../store/store";
+import { API_MODE } from "../storage/mode";
 import type { ActiveView } from "../domain";
 import { Header } from "./Header";
 import { LeftPanel } from "./LeftPanel";
@@ -9,6 +10,22 @@ import { RightPanel } from "./RightPanel";
 import { SearchPalette } from "./SearchPalette";
 import { Overview } from "./workspace/Overview";
 import { Icon, type IconName } from "./workspace/Icon";
+
+// サーバー版専用ダイアログ。ローカル版ビルドでは定数分岐で除去され、チャンクも生成されない。
+const ConflictDialog = API_MODE
+  ? lazy(() =>
+      import("./workspace/ConflictDialog").then((m) => ({
+        default: m.ConflictDialog,
+      })),
+    )
+  : null;
+const MembersDialog = API_MODE
+  ? lazy(() =>
+      import("./workspace/MembersDialog").then((m) => ({
+        default: m.MembersDialog,
+      })),
+    )
+  : null;
 
 // 作業ビュー（React Flow / dagre / 仮想化テーブル / ガント）は別チャンク。概要画面を先に描画し、
 // アイドル時に先読みしておく。
@@ -24,10 +41,12 @@ const views: { id: ActiveView; label: string; icon: IconName; key: string }[] =
 export function App() {
   const [overview, setOverview] = useState(true),
     [filters, setFilters] = useState(false),
-    [dialog, setDialog] = useState<"task" | "settings" | "project" | null>(
-      null,
-    );
+    [dialog, setDialog] = useState<
+      "task" | "settings" | "project" | "members" | null
+    >(null);
   const me = useApp((s) => s.me);
+  const readOnly = useApp(selectReadOnly),
+    conflict = useApp((s) => s.conflict);
   const activeView = useApp((s) => s.activeView),
     selection = useApp((s) => s.selection.taskId),
     tasks = useApp((s) => s.tasks),
@@ -37,7 +56,13 @@ export function App() {
     useApp.getState().setActiveView(v);
     setOverview(false);
   };
-  const create = () => setDialog("task");
+  const create = () => {
+    if (useApp.getState().role === "viewer") {
+      useApp.getState().showToast("閲覧のみの権限です", true);
+      return;
+    }
+    setDialog("task");
+  };
   useEffect(() => {
     void loadViewShell();
   }, []);
@@ -69,6 +94,10 @@ export function App() {
       if (key === "n") {
         e.preventDefault();
         e.stopImmediatePropagation();
+        if (useApp.getState().role === "viewer") {
+          useApp.getState().showToast("閲覧のみの権限です", true);
+          return;
+        }
         setDialog("task");
       }
       if (key === "escape") setFilters(false);
@@ -175,7 +204,15 @@ export function App() {
           <div className="local-notice">
             <span className="signal green" />
             <span>
-              ローカルワークスペース<small>データはこのブラウザに保存</small>
+              {API_MODE ? (
+                <>
+                  共有ワークスペース<small>データはサーバーに保存</small>
+                </>
+              ) : (
+                <>
+                  ローカルワークスペース<small>データはこのブラウザに保存</small>
+                </>
+              )}
             </span>
           </div>
           <div className="nav-user">
@@ -198,6 +235,7 @@ export function App() {
         <Header
           onNewProject={() => setDialog("project")}
           onSettings={() => setDialog("settings")}
+          onMembers={() => setDialog("members")}
         />
         <div className="workspace-heading">
           <div>
@@ -232,15 +270,17 @@ export function App() {
                 絞り込み
               </button>
             )}
-            <button
-              aria-label="タスクを追加"
-              title="タスクを追加"
-              className="btn primary"
-              onClick={create}
-            >
-              <Icon name="plus" />
-              タスクを追加
-            </button>
+            {!readOnly && (
+              <button
+                aria-label="タスクを追加"
+                title="タスクを追加"
+                className="btn primary"
+                onClick={create}
+              >
+                <Icon name="plus" />
+                タスクを追加
+              </button>
+            )}
           </div>
         </div>
         {overview ? (
@@ -308,6 +348,14 @@ export function App() {
             setDialog(null);
           }}
         />
+      )}
+      {API_MODE && (
+        <Suspense fallback={null}>
+          {dialog === "members" && MembersDialog && (
+            <MembersDialog onClose={() => setDialog(null)} />
+          )}
+          {conflict && ConflictDialog && <ConflictDialog />}
+        </Suspense>
       )}
     </div>
   );

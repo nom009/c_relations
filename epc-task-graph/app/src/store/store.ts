@@ -42,7 +42,8 @@ import {
   NewerSchemaError,
 } from "../domain";
 import { runFullLayout } from "../layout/layout";
-import { CorruptDocError } from "../storage/GraphRepository";
+import { CorruptDocError, type RowConflict } from "../storage/GraphRepository";
+import type { ProjectRole } from "../storage/apiContract";
 import { backupReminderMessage, downloadJson, requestPersistentStorage } from "./backup";
 import { isWriterTab } from "./writerLock";
 import {
@@ -139,6 +140,49 @@ const emptyDirty = (): DirtyState => ({
   deletedDeps: new Set(),
 });
 
+// サーバー版のみ: 保存時の行競合（ConflictDialog が表示する）。
+export interface ConflictState {
+  conflicts: RowConflict[];
+  names: string[];
+}
+
+// サーバー版（apiSync.ts）が差し込む拡張点。ローカル版では null のまま＝従来どおりの動作。
+export interface ApiHooks {
+  // 読込/切替/複製/復元した doc を採用: 権限と同期状態を更新する。
+  adoptDoc(doc: GraphDoc): void;
+  // 全量保存後: サーバー採番の rev を取り直す。まだ表示していない新規プロジェクトでは adoptNow=true。
+  afterFullSave(projectId: string, adoptNow?: boolean): Promise<void>;
+  // プロジェクトから離れる/削除する前: ポーリングと同期状態を切り離す。
+  detach(): void;
+  // 競合の解決をユーザーに選ばせ、反映して返る（返ったら flush が再試行する）。
+  resolveConflicts(conflicts: RowConflict[]): Promise<void>;
+  // 保存失敗の扱い。'recovered' なら flush は成功扱いで終わる。
+  onSaveError(error: unknown): Promise<"recovered" | "failed">;
+}
+let apiHooks: ApiHooks | null = null;
+export function installApiHooks(hooks: ApiHooks | null): void {
+  apiHooks = hooks;
+}
+export function isFlushing(): boolean {
+  return activeFlush !== null;
+}
+export function selectReadOnly(s: { role: ProjectRole | null }): boolean {
+  return s.role === "viewer";
+}
+
+const READ_ONLY_TOAST_INTERVAL_MS = 3000;
+let lastReadOnlyToastAt = 0;
+// 閲覧のみ（viewer）ならデータ変更を拒否して true を返す（ローカル版は role=null で常に false）。
+function readOnlyBlocked(): boolean {
+  if (useApp.getState().role !== "viewer") return false;
+  const now = Date.now();
+  if (now - lastReadOnlyToastAt > READ_ONLY_TOAST_INTERVAL_MS) {
+    lastReadOnlyToastAt = now;
+    useApp.getState().showToast("閲覧のみの権限です", true);
+  }
+  return true;
+}
+
 const noSelection = (): Selection => ({ taskId: null, edgeId: null, aggId: null });
 
 // 折り畳み状態は表示（viewSpec）と永続（viewState）の両方へ同じ値を書く。
@@ -177,8 +221,12 @@ export interface AppState {
   selectedIds: string[];
   editingId: string | null;
   toast: ToastItem[];
-  saveStatus: "saved" | "dirty" | "error";
+  saveStatus: "saved" | "dirty" | "error" | "conflict";
   dirty: DirtyState;
+  // ---- サーバー版のみ（ローカル版は常に null）----
+  role: ProjectRole | null; // null=ローカル（全権限）。viewer は閲覧のみ
+  account: { email: string; name: string } | null;
+  conflict: ConflictState | null;
   runners: Runners;
   cpHighlight: boolean; // CP強調トグル（§2.11/§9.2）。非永続・Undo対象外
   connectMode: boolean; // 「つなぐモード」: クリックで依存を接続/切断（トラックパッド向けの直感操作）
@@ -318,12 +366,17 @@ export function flushPersistence(): Promise<void> {
       if (fullSave) {
         await enqueueWrite(() => getRepo().saveGraph(doc));
         if (pendingFullSave === fullSave) pendingFullSave = null;
+        if (apiHooks) await apiHooks.afterFullSave(doc.project.id);
         if (useApp.getState().project.id === doc.project.id)
           setCurrentProjectId(doc.project.id);
         void useApp.getState().refreshProjects();
       } else {
         const result = await enqueueWrite(() => persistPatch(doc, dirty));
-        if (!result.ok) throw new Error("保存の競合を検知しました");
+        if (!result.ok) {
+          if (!apiHooks) throw new Error("保存の競合を検知しました");
+          await apiHooks.resolveConflicts(result.conflicts);
+          continue;
+        }
       }
       if (useApp.getState().project.id !== doc.project.id) continue;
       if (generation === saveGeneration) {
@@ -335,6 +388,7 @@ export function flushPersistence(): Promise<void> {
     }
   })()
     .catch((error) => {
+      if (apiHooks) return handleApiSaveError(apiHooks, error);
       useApp.setState({ saveStatus: "error" });
       useApp
         .getState()
@@ -349,7 +403,13 @@ export function flushPersistence(): Promise<void> {
     });
   return activeFlush;
 }
+async function handleApiSaveError(hooks: ApiHooks, error: unknown): Promise<void> {
+  if ((await hooks.onSaveError(error)) === "recovered") return;
+  useApp.setState({ saveStatus: "error" });
+  throw error;
+}
 function scheduleSave() {
+  if (useApp.getState().role === "viewer") return; // 閲覧のみは保存しない（個人の表示状態も端末内のみ）
   saveGeneration++;
   useApp.setState({ saveStatus: "dirty" });
   if (hydrating || !isWriterTab()) return;
@@ -360,6 +420,7 @@ function scheduleSave() {
 }
 
 function restoreHistory(direction: "undo" | "redo") {
+  if (readOnlyBlocked()) return;
   const before = useApp.getState();
   const beforeTasks = new Map(before.tasks.map((t) => [t.id, t]));
   const beforeDeps = new Map(before.dependencies.map((d) => [d.id, d]));
@@ -460,10 +521,13 @@ async function loadGraphWithRecovery(id: string): Promise<{ doc: GraphDoc; notif
 // （同期表示済みの state をクロバーしない）。既存プロジェクトがある時のみ読み込んで差し替える。
 export async function bootstrapStore(): Promise<void> {
   hydrating = true;
-  const persistedReq = requestPersistentStorage().then((persisted) => {
-    useApp.setState({ storagePersisted: persisted });
-    return persisted;
-  });
+  // サーバー版はサーバーが正本のため、永続ストレージ要求・バックアップ促しは行わない。
+  const persistedReq: Promise<boolean | null> = apiHooks
+    ? Promise.resolve(null)
+    : requestPersistentStorage().then((persisted) => {
+        useApp.setState({ storagePersisted: persisted });
+        return persisted;
+      });
   try {
     const repo = getRepo();
     const list = await repo.listProjects();
@@ -471,14 +535,16 @@ export async function bootstrapStore(): Promise<void> {
       const doc = useApp.getState().toDoc();
       await repo.saveGraph(doc);
       setCurrentProjectId(doc.project.id);
+      if (apiHooks) await apiHooks.afterFullSave(doc.project.id, true);
     } else {
       const cur = getCurrentProjectId();
       const targetId = cur && list.some((p) => p.id === cur) ? cur : list[0].id;
       setCurrentProjectId(targetId);
       const { doc, notified } = await loadGraphWithRecovery(targetId);
       useApp.getState().loadDoc(doc, { persist: false });
+      apiHooks?.adoptDoc(doc);
       // 永続化の結果は待たせずに起動し、判明後（遅くとも1.5秒後）にリマインドを判定する。
-      if (!notified)
+      if (!notified && !apiHooks)
         void Promise.race([
           persistedReq,
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
@@ -609,6 +675,9 @@ export const useApp = create<AppState>()(
       toast: [],
       saveStatus: "saved",
       dirty: emptyDirty(),
+      role: null,
+      account: null,
+      conflict: null,
       runners: {},
       cpHighlight: false,
       connectMode: false,
@@ -654,6 +723,7 @@ export const useApp = create<AppState>()(
 
       // ---- タスク/依存 CRUD（ダーティ追跡付き）----
       addTask: (p = {}, { edit = true } = {}) => {
+        if (readOnlyBlocked()) return makeTask({ ...p }, get().me);
         const t = makeTask(
           {
             ...p,
@@ -673,6 +743,7 @@ export const useApp = create<AppState>()(
         return t;
       },
       updateTask: (id, patch) => {
+        if (readOnlyBlocked()) return;
         set((s) => {
           const t = s.tasks.find((x) => x.id === id);
           if (!t) return;
@@ -685,6 +756,7 @@ export const useApp = create<AppState>()(
         scheduleSave();
       },
       setPosition: (id, pos) => {
+        if (readOnlyBlocked()) return;
         set((s) => {
           const t = s.tasks.find((x) => x.id === id);
           if (!t) return;
@@ -694,6 +766,7 @@ export const useApp = create<AppState>()(
         scheduleSave();
       },
       applyPositions: (map) => {
+        if (readOnlyBlocked()) return;
         set((s) => {
           for (const t of s.tasks) {
             if (map[t.id]) {
@@ -705,6 +778,7 @@ export const useApp = create<AppState>()(
         scheduleSave();
       },
       deleteTasks: (ids) => {
+        if (readOnlyBlocked()) return;
         const idset = new Set(ids);
         set((s) => {
           s.tasks = s.tasks.filter((t) => !idset.has(t.id));
@@ -733,6 +807,7 @@ export const useApp = create<AppState>()(
           );
       },
       addDependencyChecked: (source, target) => {
+        if (readOnlyBlocked()) return false;
         const tasks = get().tasks;
         if (
           !tasks.some((t) => t.id === source) ||
@@ -763,6 +838,7 @@ export const useApp = create<AppState>()(
         return true;
       },
       updateDep: (id, patch) => {
+        if (readOnlyBlocked()) return;
         set((s) => {
           const d = s.dependencies.find((x) => x.id === id);
           if (!d) return;
@@ -779,6 +855,7 @@ export const useApp = create<AppState>()(
         scheduleSave();
       },
       deleteDeps: (ids) => {
+        if (readOnlyBlocked()) return;
         const idset = new Set(ids);
         set((s) => {
           s.dependencies = s.dependencies.filter((d) => !idset.has(d.id));
@@ -787,6 +864,7 @@ export const useApp = create<AppState>()(
         scheduleSave();
       },
       createSuccessor: (sourceId) => {
+        if (readOnlyBlocked()) return;
         const src = get().tasks.find((t) => t.id === sourceId);
         if (!src) return;
         const pos = { x: src.position.x + 220, y: src.position.y };
@@ -850,6 +928,7 @@ export const useApp = create<AppState>()(
         }),
       // 一括更新（削除/ステータス/担当/工種）: 1回の set() ＝ 1 Undo単位（zundo は状態差分で1エントリ）。
       bulkUpdateTasks: (ids, patch) => {
+        if (readOnlyBlocked()) return;
         const idset = new Set(ids);
         set((s) => {
           const now = nowISO();
@@ -1060,6 +1139,7 @@ export const useApp = create<AppState>()(
 
       // ---- 保存ビュー（§2.8/§12.3.8 PR-T2④）----
       saveCurrentView: (name) => {
+        if (readOnlyBlocked()) return;
         const s = get();
         const view: SavedView = {
           id: newId(),
@@ -1107,6 +1187,7 @@ export const useApp = create<AppState>()(
         get().showToast("ビューを適用しました: " + v.name);
       },
       deleteView: (id) => {
+        if (readOnlyBlocked()) return;
         set((s) => {
           s.savedViews = s.savedViews.filter((v) => v.id !== id);
           if (s.defaultViewId === id) s.defaultViewId = null; // 既定だったビューを消したら既定も解除
@@ -1229,6 +1310,9 @@ export const useApp = create<AppState>()(
           s.expandLevel = doc.viewState.expandLevel || 2;
           s.dirty = emptyDirty();
           s.saveStatus = pendingFullSave ? "dirty" : "saved";
+          // サーバー版: 全量置換（インポート等）は新規プロジェクトとして作られ、呼び出し者が所有者になる。
+          if (pendingFullSave && apiHooks) s.role = "owner";
+          s.conflict = null;
         });
         useApp.temporal.getState().clear(); // 新ドキュメントは履歴を持ち越さない
         // loadDoc は「全量差替え」（デモ生成・インポート等）。差分ではなく全量 saveGraph で
@@ -1269,6 +1353,7 @@ export const useApp = create<AppState>()(
 
       // ---- 複数プロジェクト管理（§6.1）----
       renameProject: (name) => {
+        if (readOnlyBlocked()) return;
         set((s) => {
           s.project.name = name;
           s.project.updatedAt = nowISO();
@@ -1277,6 +1362,7 @@ export const useApp = create<AppState>()(
       },
       setDataDate: (d) => {
         if (!isValidIsoDate(d)) return; // 空欄・不正値は描画/CPM を壊すため無視
+        if (readOnlyBlocked()) return;
         set((s) => {
           s.project.dataDate = d;
           s.project.updatedAt = nowISO();
@@ -1284,6 +1370,7 @@ export const useApp = create<AppState>()(
         scheduleSave();
       },
       updateCalendar: (patch) => {
+        if (readOnlyBlocked()) return;
         set((s) => {
           const cal =
             s.calendars.find((c) => c.id === s.project.calendarId) ??
@@ -1311,6 +1398,7 @@ export const useApp = create<AppState>()(
           await flushPersistence(); // 読込中の編集を旧プロジェクトへ吐き出してから差し替える
           setCurrentProjectId(id);
           get().loadDoc(doc, { persist: false });
+          apiHooks?.adoptDoc(doc);
           get().fit(200);
           if (!notified) get().showToast("プロジェクトを切り替えました: " + doc.project.name);
         } catch {
@@ -1323,6 +1411,7 @@ export const useApp = create<AppState>()(
           await flushPersistence();
           await enqueueWrite(() => getRepo().saveGraph(doc));
           await flushPersistence();
+          if (apiHooks) await apiHooks.afterFullSave(doc.project.id, true);
           setCurrentProjectId(doc.project.id);
           get().loadDoc(doc, { persist: false });
           await get().refreshProjects();
@@ -1342,6 +1431,7 @@ export const useApp = create<AppState>()(
           await flushPersistence();
           setCurrentProjectId(dup.project.id);
           get().loadDoc(dup, { persist: false });
+          apiHooks?.adoptDoc(dup);
           await get().refreshProjects();
           get().fit(200);
           get().showToast("プロジェクトを複製しました");
@@ -1354,6 +1444,7 @@ export const useApp = create<AppState>()(
         try {
           await flushPersistence();
           await getRepo().deleteProject(curId);
+          apiHooks?.detach(); // 削除済みプロジェクトをポーリングしない（次の切替で adoptDoc される）
           // 削除待ちの間の編集は書込先が無いので破棄する（保存エラーで切替が止まるのを防ぐ）。
           if (saveTimer) {
             clearTimeout(saveTimer);

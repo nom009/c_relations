@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useApp, selectActiveCalendar } from "../../store/store";
+import { useApp, selectActiveCalendar, selectReadOnly } from "../../store/store";
 import { isValidIsoDate } from "../../domain";
+import { API_MODE } from "../../storage/mode";
 import { Dialog } from "./Dialog";
 export function SettingsDialog({
   onClose,
@@ -12,7 +13,9 @@ export function SettingsDialog({
   const project = useApp((s) => s.project),
     cal = useApp(selectActiveCalendar),
     me = useApp((s) => s.me),
-    storagePersisted = useApp((s) => s.storagePersisted);
+    storagePersisted = useApp((s) => s.storagePersisted),
+    account = useApp((s) => s.account),
+    readOnly = useApp(selectReadOnly);
   const [name, setName] = useState(isNew ? "" : project.name),
     [date, setDate] = useState(
       isNew ? new Date().toLocaleDateString("sv-SE") : project.dataDate,
@@ -132,13 +135,22 @@ export function SettingsDialog({
                 </label>
               </details>
               <div className="storage-note">
-                データはこのブラウザに保存されます。端末を移す際は「データ」からJSONを書き出してください。
-                {storagePersisted !== null && (
-                  <div data-testid="storage-persisted">
-                    {storagePersisted
-                      ? "保存領域: 保護済み"
-                      : "保存領域: 未保護（ブラウザが容量不足時に削除する場合があります。定期的にJSONで書き出してください）"}
+                {API_MODE ? (
+                  <div data-testid="storage-server">
+                    保存先: サーバー（ログイン中: {account?.email ?? "不明"}）{" "}
+                    <a href="/.auth/logout?post_logout_redirect_uri=/">ログアウト</a>
                   </div>
+                ) : (
+                  <>
+                    データはこのブラウザに保存されます。端末を移す際は「データ」からJSONを書き出してください。
+                    {storagePersisted !== null && (
+                      <div data-testid="storage-persisted">
+                        {storagePersisted
+                          ? "保存領域: 保護済み"
+                          : "保存領域: 未保護（ブラウザが容量不足時に削除する場合があります。定期的にJSONで書き出してください）"}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </>
@@ -151,7 +163,7 @@ export function SettingsDialog({
           <button
             type="submit"
             className="btn primary"
-            disabled={busy || !name.trim()}
+            disabled={busy || !name.trim() || (!isNew && readOnly)}
           >
             {busy ? "保存中…" : isNew ? "プロジェクトを作成" : "変更を保存"}
           </button>

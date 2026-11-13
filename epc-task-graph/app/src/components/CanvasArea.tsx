@@ -28,7 +28,7 @@ import {
 } from '../domain';
 import { toRFNodes, toRFEdges, type RFNodeData } from '../adapters/reactflow';
 import { dagreLayout } from '../layout/dagreCore';
-import { useApp, explainReject, nameOf } from '../store/store';
+import { useApp, explainReject, nameOf, selectReadOnly } from '../store/store';
 import { useCpm, useVisibleGraph } from '../store/hooks';
 import { nodeTypes } from './nodes';
 import { CircuitConnectionLine, edgeTypes } from './circuitFx';
@@ -158,6 +158,7 @@ export function CanvasArea() {
   const connectMode = useApp((s) => s.connectMode);
   // 非表示中（他ビュー表示時）に Delete で選択ノードが消えないよう、グラフ表示時だけ有効化。
   const graphActive = useApp((s) => s.activeView === 'graph');
+  const readOnly = useApp(selectReadOnly);
   const focus = viewSpec.focus;
   const rf = useReactFlow();
   const dragSrc = useRef<string | null>(null);
@@ -452,7 +453,9 @@ export function CanvasArea() {
         snapToGrid
         snapGrid={[15, 15]}
         connectionRadius={30}
-        deleteKeyCode={graphActive ? DELETE_KEYS : null}
+        deleteKeyCode={graphActive && !readOnly ? DELETE_KEYS : null}
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
         multiSelectionKeyCode={['Shift']}
         minZoom={0.05}
         maxZoom={2.5}

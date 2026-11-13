@@ -1,0 +1,27 @@
+{
+  "name": "epc-task-graph-api",
+  "private": true,
+  "version": "0.1.0",
+  "description": "EPC Task Graph multi-user API (Azure Functions v4 + Azure SQL)",
+  "main": "dist/index.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "node build.mjs",
+    "package:deploy": "node scripts/pack-deploy.mjs",
+    "dev": "tsx dev/server.ts"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0",
+    "mssql": "^11.0.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/mssql": "^9.1.5",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.12"
+  }
+}

@@ -6,7 +6,10 @@
 // ============================================================================
 import type { GraphDoc } from '../domain';
 import { getRepository } from '../storage/DexieRepository';
-import type { GraphPatch, PatchResult } from '../storage/GraphRepository';
+import { getApiRepository } from '../storage/ApiRepository';
+import { API_MODE } from '../storage/mode';
+import type { GraphPatch, GraphRepository, PatchResult } from '../storage/GraphRepository';
+import { buildApiPatch, commitPatch, isPatchEmpty, syncState } from './sync';
 
 export interface DirtySnapshot {
   tasks: string[];
@@ -15,10 +18,11 @@ export interface DirtySnapshot {
   deletedDeps: string[];
 }
 
-const repo = getRepository();
+// サーバー版（VITE_STORAGE=api）ではビルド時定数により Dexie 側は使われない。
+const repo: GraphRepository = API_MODE ? getApiRepository() : getRepository();
 const CUR_KEY = 'epc-current-project';
 
-export function getRepo() {
+export function getRepo(): GraphRepository {
   return repo;
 }
 
@@ -71,5 +75,13 @@ export function buildPatch(doc: GraphDoc, dirty: DirtySnapshot): GraphPatch {
 }
 
 export async function persistPatch(doc: GraphDoc, dirty: DirtySnapshot): Promise<PatchResult> {
-  return repo.savePatch(buildPatch(doc, dirty));
+  if (!API_MODE) return repo.savePatch(buildPatch(doc, dirty));
+  const epoch = syncState.epoch;
+  const patch = buildApiPatch(doc, dirty, syncState);
+  // 変更がなければサーバーへ送らない（ポーリング間の空保存を避ける）。
+  if (isPatchEmpty(patch)) return { ok: true, version: syncState.lastVersion, newRevs: {} };
+  const result = await repo.savePatch(patch);
+  // 保存中にプロジェクトが切り替わっていたら、新しい同期状態を汚さない。
+  if (result.ok && syncState.epoch === epoch) commitPatch(syncState, patch, result.newRevs);
+  return result;
 }

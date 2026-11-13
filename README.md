@@ -78,7 +78,9 @@ epc-task-graph/
     src/domain/                    React非依存の純関数（グラフ/フィルタ/CPM/表示パイプライン）
     src/store/  src/storage/       zustand + immer + zundo / Dexie（差分永続化）
     src/adapters/  src/components/  React Flow v12 隔離レイヤ + UI
-    tests/                         vitest（単体）＋ playwright（e2e）
+    tests/                         vitest（単体）＋ playwright（e2e / e2e-api）
+  api/                             サーバー版 API（Azure Functions + Azure SQL）
+  infra/  swa/                     Azure リソース定義（Bicep）/ SWA 設定
 ```
 
 ## ロードマップ
@@ -94,7 +96,7 @@ epc-task-graph/
 - [x] **Phase 2 — CPM完成** — 依存タイプ **FS/SS/FF/SF＋lag**・日付制約 **SNET/FNLT/ASAP**・**稼働カレンダー**（稼働曜日＋祝日・土日も稼働に設定可）。すべて右パネル/左パネルで編集
 - [x] **Phase 1 PR5–8（主要完了）** — フィルタ/保存ビュー/**検索(Cmd+K)**/キーボード/俯瞰(集約グリッド＋CP色MiniMap)/**WBSツリーパネル**
 - [~] **MSPDI連携（下ごしらえ）** — MS Project XML の出力/取込で往復（タスク・WBS・所要・マイルストーン・依存タイプ/ラグ）。残: リソース(担当)・カレンダー
-- [ ] Phase 4 — Azure本番化＋複数人編集（Entra ID・行単位衝突検知）
+- [x] **Phase 4** — サーバー版（Azure SWA + Functions + Azure SQL・Entra ID ログイン・プロジェクト単位のメンバー権限・行単位衝突検知＋ポーリング同期）。GitHub Pages のローカル版はそのまま。手順: [docs/azure-deployment.md](docs/azure-deployment.md)
 - [ ] Phase 5 — MS Project（MSPDI）連携
 
 詳細は [`docs/epc-task-graph-design.md`](docs/epc-task-graph-design.md) を参照。

@@ -37,8 +37,8 @@ export interface RowConflict {
   entity: 'task' | 'dep';
   id: string;
   baseRev: number;
-  serverRev: number;
-  serverRow: Task | Dependency;
+  serverRev: number; // サーバー側で削除済みなら 0
+  serverRow: Task | Dependency | null; // サーバー側で削除済みなら null（ApiRepository のみ）
 }
 
 export type PatchResult =
