@@ -8,19 +8,41 @@ import { API_MODE, DEMO_MODE } from "../storage/mode";
 import { selectCpm } from "../store/selectors";
 import { downloadJson } from "../store/backup";
 import { useSelectedTask } from "../store/hooks";
-import { validateDoc, parseDoc, cloneDocWithNewIds, wbsPath, toMspdi, fromMspdi, emptyDoc, migrateDoc, repairDoc } from "../domain";
+import { validateDoc, parseDoc, cloneDocWithNewIds, wbsPath, toMspdi, fromMspdi, emptyDoc, migrateDoc, repairDoc, toCsv, fromCsv, csvTemplate, decodeCsvBytes } from "../domain";
 
-// データ入出力メニュー（ツールバー整理・§1.3）: JSON/MSPDI の出力・取込を1つのドロップダウンに集約。
+// UTF-8(BOM付き) で保存する＝Excel でダブルクリックしても文字化けしない。
+function downloadCsv(text: string, filename: string) {
+  const blob = new Blob(["\uFEFF" + text], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+const listMessages = (title: string, msgs: string[], max = 30) =>
+  title +
+  "\n\n" +
+  msgs.slice(0, max).join("\n") +
+  (msgs.length > max ? `\n…ほか ${msgs.length - max} 件` : "");
+
+// データ入出力メニュー（ツールバー整理・§1.3）: JSON/MSPDI/CSV の出力・取込を1つのドロップダウンに集約。
 function DataMenu({
   onJsonExport,
   onJsonImport,
   onMspdiExport,
   onMspdiImport,
+  onCsvTemplate,
+  onCsvExport,
+  onCsvImport,
 }: {
   onJsonExport: () => void;
   onJsonImport: () => void;
   onMspdiExport: () => void;
   onMspdiImport: () => void;
+  onCsvTemplate: () => void;
+  onCsvExport: () => void;
+  onCsvImport: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -70,6 +92,10 @@ function DataMenu({
           <div className="menu-sep" />
           {item("MS Project XMLを書き出す", onMspdiExport)}
           {item("MS Project XMLを読み込む…", onMspdiImport)}
+          <div className="menu-sep" />
+          {item("CSVテンプレートを書き出す", onCsvTemplate)}
+          {item("CSV（Excel）を書き出す", onCsvExport)}
+          {item("CSV（Excel）を読み込む…", onCsvImport)}
         </div>
       ) : null}
     </div>
@@ -197,6 +223,52 @@ export function Header({
   const canRedo = useStore(useApp.temporal, (s) => s.futureStates.length > 0);
   const fileRef = useRef<HTMLInputElement>(null);
   const mspdiRef = useRef<HTMLInputElement>(null);
+  const csvRef = useRef<HTMLInputElement>(null);
+
+  // ---- CSV（Excel）連携: 標準テンプレート列。取込は常に新規プロジェクト ----
+  const doCsvTemplate = () => downloadCsv(csvTemplate(), "タスク取込テンプレート.csv");
+  const doExportCsv = () => {
+    const doc = useApp.getState().toDoc();
+    downloadCsv(
+      toCsv(doc.tasks, doc.dependencies),
+      `${doc.project.name}-${new Date().toISOString().slice(0, 10)}.csv`,
+    );
+  };
+  const doImportCsv = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const app = () => useApp.getState();
+      try {
+        const r = fromCsv(decodeCsvBytes(reader.result as ArrayBuffer));
+        if (r.errors.length) {
+          app().showToast(`CSVに ${r.errors.length} 件のエラーがあるため取り込みを中止しました`, true);
+          alert(listMessages("CSVを修正してから再度読み込んでください。", r.errors));
+          return;
+        }
+        const base = { ...emptyDoc(), tasks: r.tasks, dependencies: r.dependencies };
+        if (r.earliestStart) base.project = { ...base.project, dataDate: r.earliestStart };
+        const name = file.name.replace(/\.csv$/i, "") || "CSV取込";
+        const doc = cloneDocWithNewIds(base, name);
+        const v = validateDoc(doc);
+        if (!v.ok) {
+          app().showToast("取込検証エラー: " + v.errors.slice(0, 2).join(" / "), true);
+          return;
+        }
+        if (!(await flushPersistence().then(() => true, () => false))) return;
+        app().loadDoc(doc);
+        app().layoutAll();
+        app().showToast(
+          `CSVを取り込みました（${doc.tasks.length}タスク・${doc.dependencies.length}依存）` +
+            (r.warnings.length ? `／注意 ${r.warnings.length} 件` : ""),
+        );
+        if (r.warnings.length) alert(listMessages("取り込みました。以下を確認してください。", r.warnings));
+      } catch {
+        app().showToast("CSV解析に失敗しました", true);
+      }
+    };
+    reader.onerror = () => useApp.getState().showToast("ファイルを読み込めませんでした", true);
+    reader.readAsArrayBuffer(file);
+  };
 
   // ---- MSPDI（MS Project XML）連携（§8 / Phase5 下ごしらえ）----
   const doExportMspdi = () => {
@@ -356,6 +428,20 @@ export function Header({
         onJsonImport={() => fileRef.current?.click()}
         onMspdiExport={doExportMspdi}
         onMspdiImport={() => mspdiRef.current?.click()}
+        onCsvTemplate={doCsvTemplate}
+        onCsvExport={doExportCsv}
+        onCsvImport={() => csvRef.current?.click()}
+      />
+      <input
+        ref={csvRef}
+        type="file"
+        accept=".csv,text/csv"
+        style={{ display: "none" }}
+        data-testid="csv-file"
+        onChange={(e) => {
+          if (e.target.files?.[0]) doImportCsv(e.target.files[0]);
+          e.target.value = "";
+        }}
       />
       <input
         ref={fileRef}

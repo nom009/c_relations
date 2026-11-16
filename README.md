@@ -96,6 +96,7 @@ epc-task-graph/
 - [x] **Phase 2 — CPM完成** — 依存タイプ **FS/SS/FF/SF＋lag**・日付制約 **SNET/FNLT/ASAP**・**稼働カレンダー**（稼働曜日＋祝日・土日も稼働に設定可）。すべて右パネル/左パネルで編集
 - [x] **Phase 1 PR5–8（主要完了）** — フィルタ/保存ビュー/**検索(Cmd+K)**/キーボード/俯瞰(集約グリッド＋CP色MiniMap)/**WBSツリーパネル**
 - [~] **MSPDI連携（下ごしらえ）** — MS Project XML の出力/取込で往復（タスク・WBS・所要・マイルストーン・依存タイプ/ラグ）。残: リソース(担当)・カレンダー
+- [x] **CSV（Excel）連携** — 標準テンプレートの書き出し・CSV取込（UTF-8/Shift_JIS・行番号付きエラー）・CSV出力。形式: [docs/csv-import.md](docs/csv-import.md)
 - [x] **Phase 4** — サーバー版（Azure SWA + Functions + Azure SQL・Entra ID ログイン・プロジェクト単位のメンバー権限・行単位衝突検知＋ポーリング同期）。GitHub Pages のローカル版はそのまま。手順: [docs/azure-deployment.md](docs/azure-deployment.md)
 - [ ] Phase 5 — MS Project（MSPDI）連携
 
