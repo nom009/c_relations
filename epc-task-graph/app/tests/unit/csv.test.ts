@@ -78,6 +78,25 @@ describe('CSV 取込', () => {
     expect(fromCsv('名前,日数\nA,1').errors[0]).toMatch(/「WBS」と「タスク名」/);
   });
 
+  it('見出し上の表題行を読み飛ばし、行番号は Excel の行と一致する', () => {
+    const r = fromCsv(['工程表（仮）,,', ',,', 'WBS,タスク名,先行タスク', '1,A,', '2,B,9'].join('\n'));
+    expect(r.errors).toEqual(['5行目: 先行タスク「9」が見つかりません']);
+  });
+
+  it('Unicode テキスト（UTF-16LE＋BOM・タブ区切り）を読める', () => {
+    const s = 'WBS\tタスク名\t先行タスク\r\n1\tA\t\r\n2\tB\t1，1\r\n';
+    const bytes = new Uint8Array(2 + s.length * 2);
+    bytes.set([0xff, 0xfe]);
+    for (let i = 0; i < s.length; i++) {
+      bytes[2 + i * 2] = s.charCodeAt(i) & 0xff;
+      bytes[3 + i * 2] = s.charCodeAt(i) >> 8;
+    }
+    const r = fromCsv(decodeCsvBytes(bytes));
+    expect(r.errors).toEqual([]);
+    expect(r.tasks.map((t) => t.name)).toEqual(['A', 'B']);
+    expect(r.dependencies.length).toBe(1);
+  });
+
   it('循環を検出する', () => {
     const r = fromCsv([H, '1,A,,1,,2,,,,,,', '2,B,,1,,1,,,,,,'].join('\n'));
     expect(r.errors[0]).toMatch(/循環/);

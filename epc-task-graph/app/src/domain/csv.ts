@@ -88,7 +88,7 @@ const norm = (s: string) => s.normalize('NFKC').trim();
 const key = (s: string) => norm(s).toLowerCase().replace(/\s+/g, '');
 
 // ---- 低レベル CSV（RFC 4180: 引用符・埋め込み改行・"" エスケープ）----
-export function parseCsvRows(text: string): string[][] {
+export function parseCsvRows(text: string, delimiter = ','): string[][] {
   const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   const rows: string[][] = [];
   let row: string[] = [];
@@ -104,7 +104,7 @@ export function parseCsvRows(text: string): string[][] {
         } else quoted = false;
       } else cell += ch;
     } else if (ch === '"') quoted = true;
-    else if (ch === ',') {
+    else if (ch === delimiter) {
       row.push(cell);
       cell = '';
     } else if (ch === '\r' || ch === '\n') {
@@ -123,7 +123,11 @@ export function parseCsvRows(text: string): string[][] {
 }
 
 // Excel(日本語版) の既定 CSV は Shift_JIS(CP932)。UTF-8 として厳密に読めなければ SJIS とみなす。
+// 「Unicode テキスト」保存（UTF-16 + BOM・タブ区切り）も受ける。
 export function decodeCsvBytes(bytes: ArrayBuffer | Uint8Array): string {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (b[0] === 0xff && b[1] === 0xfe) return new TextDecoder('utf-16le').decode(b);
+  if (b[0] === 0xfe && b[1] === 0xff) return new TextDecoder('utf-16be').decode(b);
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
@@ -201,24 +205,38 @@ export function fromCsv(text: string, by = '私'): CsvImportResult {
     warnings,
     earliestStart: null,
   });
-  const rows = parseCsvRows(text);
-  const headerIdx = rows.findIndex((r) => r.some((c) => norm(c) !== ''));
-  if (headerIdx < 0) {
+  const firstLine = text.replace(/^\uFEFF/, '').split(/\r?\n/, 1)[0];
+  const delimiter = firstLine.includes('\t') && !firstLine.includes(',') ? '\t' : ',';
+  const rows = parseCsvRows(text, delimiter);
+  const headerColumns = (r: string[]) => {
+    const idx: Partial<Record<Col, number>> = {};
+    r.forEach((h, i) => {
+      const k = key(h);
+      for (const col of Object.keys(HEADER_ALIASES) as Col[]) {
+        if (idx[col] == null && HEADER_ALIASES[col].includes(k)) idx[col] = i;
+      }
+    });
+    return idx;
+  };
+  if (!rows.some((r) => r.some((c) => norm(c) !== ''))) {
     errors.push('CSVが空です');
     return empty();
   }
 
-  // 見出し → 列番号。
-  const colIdx: Partial<Record<Col, number>> = {};
-  rows[headerIdx].forEach((h, i) => {
-    const k = key(h);
-    for (const col of Object.keys(HEADER_ALIASES) as Col[]) {
-      if (colIdx[col] == null && HEADER_ALIASES[col].includes(k)) colIdx[col] = i;
+  // 見出し行: Excel の表題行などを読み飛ばすため、先頭20行から「WBS」「タスク名」を含む行を探す。
+  let headerIdx = -1;
+  let colIdx: Partial<Record<Col, number>> = {};
+  for (let r = 0; r < Math.min(rows.length, 20); r++) {
+    const idx = headerColumns(rows[r]);
+    if (idx.wbs != null && idx.name != null) {
+      headerIdx = r;
+      colIdx = idx;
+      break;
     }
-  });
-  if (colIdx.wbs == null || colIdx.name == null) {
+  }
+  if (headerIdx < 0) {
     errors.push(
-      `${headerIdx + 1}行目（見出し）に「WBS」と「タスク名」の列が必要です（テンプレートの見出しをそのまま使ってください）`,
+      '見出し行に「WBS」と「タスク名」の列が必要です（先頭20行以内・テンプレートの見出しをそのまま使ってください）',
     );
     return empty();
   }
@@ -331,7 +349,7 @@ export function fromCsv(text: string, by = '私'): CsvImportResult {
   const dependencies: Dependency[] = [];
   const pairs = new Set<string>();
   for (const p of parsed) {
-    const tokens = p.predRaw.split(/[,、;；\r\n]+/).map(norm).filter(Boolean);
+    const tokens = p.predRaw.split(/[,、，;；\r\n]+/).map(norm).filter(Boolean);
     for (const tok of tokens) {
       const ref = parsePredToken(tok, knownWbs);
       if (!ref) {
