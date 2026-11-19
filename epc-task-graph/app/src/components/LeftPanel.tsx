@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { useApp, selectActiveCalendar } from "../store/store";
 import { useAssigneeOptions, useVisibleGraph } from "../store/hooks";
+import { HolidayPresets } from "./HolidayPresets";
 import {
   naturalWbsCompare,
   isValidIsoDate,
@@ -226,7 +227,9 @@ function CalendarEditor() {
       </div>
       <div className="field">
         <label>祝日（1行1日・yyyy-mm-dd）</label>
+        {/* プリセット適用などでストア側が変わったら作り直して表示を同期する */}
         <textarea
+          key={cal.holidays.join(",")}
           rows={2}
           defaultValue={cal.holidays.join("\n")}
           placeholder={"2026-05-03\n2026-05-04"}
@@ -239,6 +242,7 @@ function CalendarEditor() {
           }}
         />
       </div>
+      <HolidayPresets />
     </>
   );
 }

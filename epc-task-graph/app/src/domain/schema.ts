@@ -56,6 +56,10 @@ export const taskSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   updatedBy: z.string(),
+  actualStart: isoDateSchema.nullable().optional(),
+  actualFinish: isoDateSchema.nullable().optional(),
+  baselineStart: isoDateSchema.nullable().optional(),
+  baselineFinish: isoDateSchema.nullable().optional(),
 });
 
 export const dependencySchema = z.object({
@@ -78,6 +82,7 @@ export const projectMetaSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   version: z.number().int(),
+  wbsNames: z.record(z.string(), z.string().max(200)).optional(),
 });
 
 export const viewStateSchema = z.object({

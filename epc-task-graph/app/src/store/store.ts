@@ -15,6 +15,7 @@ import { enableMapSet } from "immer";
 import {
   type ActiveView,
   type Calendar,
+  type CsvMergePlan,
   type Dependency,
   type DisplayMode,
   type GraphDoc,
@@ -29,11 +30,13 @@ import {
   type ViewState,
   canConnect,
   clampLagDays,
+  csvFieldsEqual,
   isValidIsoDate,
   makeDep,
   makeTask,
   nowISO,
   newId,
+  pickCsvFields,
   seedDemo,
   collapsedForLevel,
   allTopPrefixes,
@@ -264,6 +267,7 @@ export interface AppState {
   setSelectedIds: (ids: string[], anchor?: string) => void; // 範囲選択の確定（ids＋アンカー）
   toggleSelectedId: (id: string) => void; // Cmd/Ctrl+クリックのトグル
   bulkUpdateTasks: (ids: string[], patch: Partial<Task>) => void; // 一括更新（1確定=1 Undo）
+  applyCsvMerge: (plan: CsvMergePlan) => void; // CSV 更新取込の反映（1回=1 Undo）
   setFilter: (patch: Partial<GraphFilter>) => void;
   clearFilter: () => void;
   setBoundary: (up: number, down: number) => void; // 「担当＋前後」の受け渡し世代（前up/後down）
@@ -803,7 +807,7 @@ export const useApp = create<AppState>()(
         scheduleSave();
         if (ids.length > 1)
           get().showToast(
-            ids.length + "件削除しました（Cmd+Z で元に戻せます）",
+            ids.length + "件削除しました（元に戻す で復元できます）",
           );
       },
       addDependencyChecked: (source, target) => {
@@ -940,6 +944,92 @@ export const useApp = create<AppState>()(
             t.updatedBy = s.me;
             s.dirty.tasks.add(t.id);
           }
+        });
+        scheduleSave();
+      },
+      // CSV 更新取込（planCsvMerge の結果）: 1回の set() ＝ 1 Undo。変わった行だけ rev を上げてダーティにする。
+      applyCsvMerge: (plan) => {
+        if (readOnlyBlocked()) return;
+        const addedIds = new Set(plan.addedIds);
+        const removedTaskIds = new Set(plan.removedTasks.map((t) => t.id));
+        const removedDepIds = new Set(plan.removedDepIds);
+        const planTaskIds = new Set(plan.tasks.map((t) => t.id));
+        const planDepIds = new Set(plan.dependencies.map((d) => d.id));
+        set((s) => {
+          const now = nowISO();
+          const curTasks = new Map(s.tasks.map((t) => [t.id, t]));
+          const tasks: Task[] = [];
+          for (const p of plan.tasks) {
+            const t = curTasks.get(p.id);
+            if (t) {
+              if (!csvFieldsEqual(t, p)) {
+                Object.assign(t, pickCsvFields(p));
+                t.rev += 1;
+                t.updatedAt = now;
+                t.updatedBy = s.me;
+                s.dirty.tasks.add(t.id);
+                s.dirty.deletedTasks.delete(t.id);
+              }
+              tasks.push(t);
+            } else if (addedIds.has(p.id)) {
+              tasks.push({ ...p, rev: 1, createdAt: now, updatedAt: now, updatedBy: s.me });
+              s.dirty.tasks.add(p.id);
+              s.dirty.deletedTasks.delete(p.id);
+            }
+          }
+          for (const t of s.tasks) {
+            if (planTaskIds.has(t.id)) continue;
+            if (removedTaskIds.has(t.id)) {
+              s.dirty.tasks.delete(t.id);
+              s.dirty.deletedTasks.add(t.id);
+            } else tasks.push(t); // 計画後に増えた行は残す
+          }
+          const alive = new Set(tasks.map((t) => t.id));
+          const curDeps = new Map(s.dependencies.map((d) => [d.id, d]));
+          const deps: Dependency[] = [];
+          const used = new Set<string>();
+          const pairs = new Set<string>();
+          const pairOf = (d: Dependency) => d.predecessorId + ">" + d.successorId;
+          for (const p of plan.dependencies) {
+            if (!alive.has(p.predecessorId) || !alive.has(p.successorId) || pairs.has(pairOf(p))) continue;
+            pairs.add(pairOf(p));
+            const d = curDeps.get(p.id);
+            if (d) {
+              if (d.type !== p.type || d.lagDays !== p.lagDays) {
+                d.type = p.type;
+                d.lagDays = clampLagDays(p.lagDays);
+                d.rev += 1;
+                d.updatedAt = now;
+                d.updatedBy = s.me;
+                s.dirty.deps.add(d.id);
+                s.dirty.deletedDeps.delete(d.id);
+              }
+              used.add(d.id);
+              deps.push(d);
+            } else {
+              deps.push({ ...p, rev: 1, updatedAt: now, updatedBy: s.me });
+              s.dirty.deps.add(p.id);
+              s.dirty.deletedDeps.delete(p.id);
+            }
+          }
+          for (const d of s.dependencies) {
+            if (used.has(d.id)) continue;
+            const stray = !planDepIds.has(d.id) && !removedDepIds.has(d.id);
+            if (stray && alive.has(d.predecessorId) && alive.has(d.successorId) && !pairs.has(pairOf(d))) {
+              pairs.add(pairOf(d));
+              deps.push(d);
+            } else {
+              s.dirty.deps.delete(d.id);
+              s.dirty.deletedDeps.add(d.id);
+            }
+          }
+          s.tasks = tasks;
+          s.dependencies = deps;
+          s.selectedIds = s.selectedIds.filter((id) => alive.has(id));
+          if (s.connectSource && !alive.has(s.connectSource)) s.connectSource = null;
+          if (s.editingId && !alive.has(s.editingId)) s.editingId = null;
+          if (s.selection.taskId && !alive.has(s.selection.taskId)) s.selection = noSelection();
+          if (s.selection.edgeId && !deps.some((d) => d.id === s.selection.edgeId)) s.selection.edgeId = null;
         });
         scheduleSave();
       },
@@ -1129,7 +1219,7 @@ export const useApp = create<AppState>()(
         );
         if (existing) {
           s.deleteDeps([existing.id]);
-          s.showToast("依存を切断しました（Cmd+Z で戻せます）");
+          s.showToast("依存を切断しました（元に戻す で復元できます）");
         } else {
           if (s.addDependencyChecked(src, id))
             s.showToast("依存を接続しました");

@@ -261,18 +261,4 @@
   transform: rotate(45deg);
   border-radius: 2px;
 }
-@media (prefers-color-scheme: dark) {
-  .gantt-left,
-  .gantt-toolbar,
-  .gantt-left-head,
-  .gantt-axis {
-    background: #0f172a;
-  }
-  .gantt-name.wbs {
-    background: #111827;
-  }
-  .gantt-name.sel {
-    background: #1e3a5f;
-  }
-}
 

@@ -17,8 +17,10 @@ test("ガント: バー右端をドラッグして所要日数を伸ばす", asy
   await page.waitForFunction(() => !!(window as any).__APP);
 
   // 全曜日稼働（線形＝バー幅と日数が一致）で決定的に。dur5 のタスクを作成しガントへ。
+  // サンプル工程（実績日つき）は表示範囲・行位置を変えるため先に除く。
   const id = await page.evaluate(() => {
     const app = (window as any).__APP.getState();
+    app.deleteTasks(app.tasks.map((t: any) => t.id));
     app.updateCalendar({ workingDays: [0, 1, 2, 3, 4, 5, 6] });
     app.setDataDate("2026-01-05");
     const t = app.addTask({ wbsCode: "95", name: "GD", durationDays: 5 });

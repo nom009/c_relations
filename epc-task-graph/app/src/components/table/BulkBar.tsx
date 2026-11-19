@@ -12,6 +12,7 @@ import {
   type Status,
 } from '../../domain';
 import { useApp } from '../../store/store';
+import { modKey } from '../keyboard';
 
 export function BulkBar({ ids, assigneeOptions }: { ids: string[]; assigneeOptions: string[] }) {
   const [assignee, setAssignee] = useState('');
@@ -34,7 +35,7 @@ export function BulkBar({ ids, assigneeOptions }: { ids: string[]; assigneeOptio
 
       <button
         className="btn danger"
-        title="選択タスクを一括削除（Cmd+Z で復元）"
+        title={`選択タスクを一括削除（${modKey('Z')} で復元）`}
         data-testid="bulk-delete"
         onClick={() => useApp.getState().deleteTasks(ids)}
       >

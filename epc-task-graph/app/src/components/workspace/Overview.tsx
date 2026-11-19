@@ -13,6 +13,7 @@ import {
   type Task,
 } from "../../domain";
 import { Icon } from "./Icon";
+import { API_MODE } from "../../storage/mode";
 
 export function Overview({
   onNavigate,
@@ -133,7 +134,7 @@ export function Overview({
         <section className="surface schedule-summary">
           <div className="section-heading">
             <div>
-              <span className="eyebrow">PROJECT TIMELINE</span>
+              <span className="eyebrow">工種別の日程</span>
               <h2>工程の見通し</h2>
             </div>
             <button className="text-button" onClick={() => onNavigate("gantt")}>
@@ -217,7 +218,7 @@ export function Overview({
         <section className="surface milestone-summary">
           <div className="section-heading">
             <div>
-              <span className="eyebrow">KEY DATES</span>
+              <span className="eyebrow">主要な節目</span>
               <h2>マイルストーン</h2>
             </div>
             <span className="count-pill">{data.milestones.length}</span>
@@ -258,7 +259,7 @@ export function Overview({
         <section className="surface critical-summary">
           <div className="section-heading">
             <div>
-              <span className="eyebrow">FOCUS NEXT</span>
+              <span className="eyebrow">クリティカルパス</span>
               <h2>完了日を左右するタスク</h2>
             </div>
             <button className="text-button" onClick={showCritical}>
@@ -314,7 +315,7 @@ export function Overview({
         <section className="surface attention-summary">
           <div className="section-heading">
             <div>
-              <span className="eyebrow">NEEDS ATTENTION</span>
+              <span className="eyebrow">要対応</span>
               <h2>確認しておきたいこと</h2>
             </div>
             <Icon name="alert" />
@@ -359,7 +360,7 @@ export function Overview({
         </span>
         <span>
           <Icon name="check" size={14} />
-          このブラウザに自動保存
+          {API_MODE ? "サーバーに自動保存" : "このブラウザに自動保存"}
         </span>
       </footer>
     </div>

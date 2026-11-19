@@ -303,3 +303,158 @@ describe('CPM 性能（§10 PR4: 4,000シードで <20ms）', () => {
     expect(median).toBeLessThan(35);
   });
 });
+
+describe('CPM 進捗（P6 方式: 完了=実績で固定／着手済み=残所要を基準日以降）', () => {
+  // makeTask は実績・ベースラインを引き継がないため、後から展開して付与する。
+  function P(id: string, durationDays: number, p: Partial<Task> = {}): Task {
+    return { ...makeTask({ id, name: id, durationDays, ...p }), ...p };
+  }
+
+  it('完了（実績開始・完了あり）: 実績日に固定し TF=0・非クリティカル。後続は基準日から', () => {
+    const A = P('A', 5, { status: 'DONE', progress: 100, actualStart: '2025-12-25', actualFinish: '2025-12-29' });
+    const B = P('B', 3);
+    const res = computeCpm([A, B], [D('A', 'B')], START);
+    checkTask(res, 'A', { es: -7, ef: -2, ls: -7, lf: -2, tf: 0, crit: false });
+    checkTask(res, 'B', { es: 0, ef: 3, ls: 0, lf: 3, tf: 0, crit: true });
+    const a = res.byTask.get('A')!;
+    expect(a.state).toBe('done');
+    expect(a.remainingDays).toBe(0);
+    expect(a.finishDate).toBe('2025-12-29');
+    expect(a.lateFinishDate).toBe('2025-12-29');
+    expect(res.criticalTasks.has('A')).toBe(false);
+    expect([...res.criticalEdges]).toEqual([]);
+    expect(res.minStart).toBe(-7);
+    expect(res.projectFinishDate).toBe('2026-01-03');
+  });
+
+  it('完了（実績なし／完了日のみ／開始日のみ／マイルストーン）: 基準日の直前に終わったものとみなす', () => {
+    const none = P('N', 4, { status: 'DONE' });
+    const fOnly = P('F', 4, { status: 'DONE', actualFinish: '2025-12-30' });
+    const sOnly = P('S', 4, { status: 'DONE', actualStart: '2025-12-30' });
+    const ms = P('M', 0, { status: 'DONE', isMilestone: true, actualFinish: '2025-12-30' });
+    const res = computeCpm([none, fOnly, sOnly, ms], [], START);
+    checkTask(res, 'N', { es: -4, ef: 0, ls: -4, lf: 0, tf: 0, crit: false });
+    expect(res.byTask.get('N')!.finishDate).toBe('2025-12-31');
+    checkTask(res, 'F', { es: -5, ef: -1, ls: -5, lf: -1, tf: 0, crit: false });
+    expect(res.byTask.get('F')!.finishDate).toBe('2025-12-30');
+    checkTask(res, 'S', { es: -2, ef: 0, ls: -2, lf: 0, tf: 0, crit: false });
+    expect(res.byTask.get('S')!.finishDate).toBe('2025-12-31');
+    checkTask(res, 'M', { es: -2, ef: -2, ls: -2, lf: -2, tf: 0, crit: false });
+    expect(res.byTask.get('M')!.finishDate).toBe('2025-12-30');
+    expect(res.criticalTasks.size).toBe(0);
+    expect(res.projectEnd).toBe(0);
+  });
+
+  it('着手済み（実績開始あり）: 開始は実績、残所要 ceil(D×残%) を基準日から。先行・SNET は無視', () => {
+    const pre = P('P', 5);
+    const A = P('A', 10, {
+      status: 'IN_PROGRESS',
+      progress: 40,
+      actualStart: '2025-12-27',
+      constraintType: 'SNET',
+      constraintDate: addCalendarDays(START, 3),
+    });
+    const C = P('C', 3);
+    const res = computeCpm([pre, A, C], [D('P', 'A'), D('A', 'C')], START);
+    const a = res.byTask.get('A')!;
+    expect(a.state).toBe('started');
+    expect(a.remainingDays).toBe(6);
+    checkTask(res, 'A', { es: -5, ef: 6, ls: 0, lf: 6, tf: 0, crit: true });
+    expect(a.esDate).toBe('2025-12-27');
+    expect(a.finishDate).toBe('2026-01-06');
+    checkTask(res, 'C', { es: 6, ef: 9, ls: 6, lf: 9, tf: 0, crit: true });
+    // 着手済みの後続（FS）は先行を縛らない → 未着手の先行は projectEnd まで余裕
+    checkTask(res, 'P', { es: 0, ef: 5, ls: 4, lf: 9, tf: 4, crit: false });
+    expect([...res.criticalEdges]).toEqual(['A->C']);
+    expect(res.minStart).toBe(-5);
+  });
+
+  it('着手済み（実績開始なし）: 進捗分を基準日から遡って開始とみなす', () => {
+    const A = P('A', 10, { status: 'IN_PROGRESS', progress: 30 });
+    const res = computeCpm([A], [], START);
+    checkTask(res, 'A', { es: -3, ef: 7, ls: 0, lf: 7, tf: 0, crit: true });
+    expect(res.byTask.get('A')!.remainingDays).toBe(7);
+  });
+
+  it('中断: 実績開始があれば着手済み、無ければ未着手として計算', () => {
+    const H = P('H', 4, { status: 'ON_HOLD', progress: 50, actualStart: '2025-12-30' });
+    const N = P('N', 4, { status: 'ON_HOLD', progress: 50 });
+    const res = computeCpm([H, N], [], START);
+    expect(res.byTask.get('H')).toMatchObject({ state: 'started', es: -2, ef: 2, remainingDays: 2 });
+    expect(res.byTask.get('N')).toMatchObject({ state: 'planned', es: 0, ef: 4, remainingDays: 4 });
+  });
+
+  it('進捗100%の着手済み: 残所要0で基準日に終わる（終了日は基準日の前日）', () => {
+    const A = P('A', 5, { status: 'IN_PROGRESS', progress: 100, actualStart: '2025-12-29' });
+    const B = P('B', 2);
+    const res = computeCpm([A, B], [D('A', 'B')], START);
+    const a = res.byTask.get('A')!;
+    expect(a).toMatchObject({ es: -3, ef: 0, remainingDays: 0, state: 'started' });
+    expect(a.finishDate).toBe('2025-12-31');
+    checkTask(res, 'B', { es: 0, ef: 2, ls: 0, lf: 2, tf: 0, crit: true });
+  });
+
+  it('前後逆転（未着手の先行→完了の後続）: 先行の余裕は負にならない', () => {
+    const pre = P('P', 3);
+    const S = P('S', 2, { status: 'DONE', actualStart: '2025-12-28', actualFinish: '2025-12-29' });
+    const res = computeCpm([pre, S], [D('P', 'S')], START);
+    checkTask(res, 'P', { es: 0, ef: 3, ls: 0, lf: 3, tf: 0, crit: true });
+    checkTask(res, 'S', { es: -4, ef: -2, ls: -4, lf: -2, tf: 0, crit: false });
+    expect(res.criticalEdges.size).toBe(0);
+  });
+
+  it('着手済みの後続: FS は先行を縛らず、FF は縛る', () => {
+    const P1 = P('P1', 4);
+    const P2 = P('P2', 4);
+    const A = P('A', 6, { status: 'IN_PROGRESS', progress: 50, actualStart: '2025-12-30' });
+    const C = P('C', 2);
+    const X = P('X', 10);
+    const res = computeCpm(
+      [P1, P2, A, C, X],
+      [D('P1', 'A'), makeDep('P2', 'A', { id: 'P2->A', type: 'FF' }), D('A', 'C')],
+      START,
+    );
+    checkTask(res, 'A', { es: -2, ef: 3, ls: 5, lf: 8, tf: 5, crit: false });
+    checkTask(res, 'P1', { es: 0, ef: 4, ls: 6, lf: 10, tf: 6, crit: false });
+    checkTask(res, 'P2', { es: 0, ef: 4, ls: 4, lf: 8, tf: 4, crit: false });
+  });
+
+  it('FNLT は着手済みにも効く（残作業が期限を超えると TF 負）', () => {
+    const A = P('A', 10, {
+      status: 'IN_PROGRESS',
+      progress: 50,
+      actualStart: '2025-12-27',
+      constraintType: 'FNLT',
+      constraintDate: addCalendarDays(START, 3),
+    });
+    const res = computeCpm([A], [], START);
+    checkTask(res, 'A', { es: -5, ef: 5, ls: -2, lf: 3, tf: -2, crit: true });
+    expect(res.byTask.get('A')!.lateFinishDate).toBe('2026-01-03');
+  });
+
+  it('finishDate は終了日を含む（週休2日: 金曜終了・週末跨ぎ）', () => {
+    const MON = '2026-01-05';
+    const MONFRI = { workingDays: [1, 2, 3, 4, 5], holidays: [] };
+    const res = computeCpm(
+      [P('A', 5), P('B', 3), P('M', 0, { isMilestone: true })],
+      [D('A', 'B'), D('B', 'M')],
+      MON,
+      MONFRI,
+    );
+    const a = res.byTask.get('A')!;
+    expect(a).toMatchObject({ state: 'planned', remainingDays: 5 });
+    expect(a.efDate).toBe('2026-01-10'); // 排他的終端（土）
+    expect(a.finishDate).toBe('2026-01-09'); // 金
+    expect(a.lateFinishDate).toBe('2026-01-09');
+    expect(res.byTask.get('B')!.finishDate).toBe('2026-01-14'); // 月〜水
+    expect(res.byTask.get('M')!.finishDate).toBe('2026-01-15');
+    expect(res.projectFinishDate).toBe('2026-01-15');
+    expect(res.minStart).toBe(0);
+  });
+
+  it('タスクなし: projectFinishDate は基準日、minStart は 0', () => {
+    const res = computeCpm([], [], START);
+    expect(res.projectFinishDate).toBe(START);
+    expect(res.minStart).toBe(0);
+  });
+});

@@ -18,6 +18,7 @@ import {
   type EdgeChange,
   type Connection,
   type IsValidConnection,
+  type AriaLabelConfig,
 } from '@xyflow/react';
 import {
   canConnect,
@@ -32,7 +33,27 @@ import { useApp, explainReject, nameOf, selectReadOnly } from '../store/store';
 import { useCpm, useVisibleGraph } from '../store/hooks';
 import { nodeTypes } from './nodes';
 import { CircuitConnectionLine, edgeTypes } from './circuitFx';
-import { isShortcutBlocked } from './keyboard';
+import { isShortcutBlocked, modKey } from './keyboard';
+
+// React Flow 標準UI（コントロール/ミニマップ/支援技術向け説明）の日本語化。参照を固定するためモジュール定数。
+const DIRECTION_LABEL: Record<string, string> = { up: '上', down: '下', left: '左', right: '右' };
+const RF_ARIA_LABELS: Partial<AriaLabelConfig> = {
+  'node.a11yDescription.default':
+    'Enter または Space でタスクを選択。Delete で削除、Escape で取り消し。',
+  'node.a11yDescription.keyboardDisabled':
+    'Enter または Space でタスクを選択し、矢印キーで移動。Delete で削除、Escape で取り消し。',
+  'node.a11yDescription.ariaLiveMessage': ({ direction, x, y }) =>
+    `選択したタスクを${DIRECTION_LABEL[direction] ?? direction}へ移動しました。新しい位置 x: ${x}, y: ${y}`,
+  'edge.a11yDescription.default':
+    'Enter または Space で依存関係を選択。Delete で削除、Escape で取り消し。',
+  'controls.ariaLabel': '表示操作',
+  'controls.zoomIn.ariaLabel': '拡大',
+  'controls.zoomOut.ariaLabel': '縮小',
+  'controls.fitView.ariaLabel': '全体を表示',
+  'controls.interactive.ariaLabel': '編集ロックの切替',
+  'minimap.ariaLabel': 'ミニマップ',
+  'handle.ariaLabel': '接続ハンドル',
+};
 
 // 俯瞰グリッド整列（§2.10/デザイン刷新）: 表示がすべて集約ノード（＝WBS群の俯瞰）のとき、
 // LR依存チェーンだと横長になり fitView が極端に縮小→ノードが判読不能になる。WBS自然順で
@@ -461,6 +482,7 @@ export function CanvasArea() {
         maxZoom={2.5}
         fitView
         proOptions={{ hideAttribution: true }}
+        ariaLabelConfig={RF_ARIA_LABELS}
       >
         <Background gap={18} size={1.2} color="#d7dbe3" bgColor="#fbfbfd" />
         <MiniMap
@@ -476,10 +498,10 @@ export function CanvasArea() {
             return DISC_COLOR[disc] || '#64748b';
           }}
         />
-        <Controls />
+        <Controls showInteractive={!readOnly} />
       </ReactFlow>
       <div className="hint">
-        空白ダブルクリックで作成 · ハンドルからドラッグで接続 · N/Tab/Enter/H/F/1-3/Delete/⌘Z · 表示 {st.visible} / 全 {st.total}
+        空白ダブルクリックで作成 · ハンドルからドラッグで接続 · N/Tab/Enter/H/F/1-3/Delete/{modKey('Z')} · 表示 {st.visible} / 全 {st.total}
       </div>
     </div>
   );

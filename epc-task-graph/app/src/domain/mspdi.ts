@@ -1,13 +1,13 @@
 // ============================================================================
 // MSPDI（MS Project Data Interchange・XML）連携 — §8 / Phase 5 下ごしらえ。
 // UI/DOM 非依存の純関数（テスト環境=node のため DOMParser を使わず軽量パーサで実装）。
-// スコープ: タスク（名前・WBS・所要日数・マイルストーン）＋依存（タイプ FS/SS/FF/SF・ラグ）の
-// 往復。リソース/カレンダー/実績は Phase 5 本実装で拡張（担当はここでは非対応）。
+// スコープ: タスク（名前・WBS・所要日数・マイルストーン）＋依存（タイプ FS/SS/FF/SF・ラグ）＋
+// 進捗（実績開始/完了・進捗率）＋ベースライン0 の往復。リソース/カレンダーは非対応（担当も非対応）。
 // ============================================================================
-import type { Dependency, DependencyType, GraphDoc, Task } from './types';
+import type { Dependency, DependencyType, GraphDoc, Status, Task } from './types';
 import type { CpmResult } from './cpm';
-import { addCalendarDays } from './cpm';
 import { makeDep, makeTask } from './factory';
+import { isValidIsoDate } from './schema';
 
 const MIN_PER_DAY = 480; // 8h/日（MSP 既定）。MSPDI Duration/LinkLag の日換算に使用。
 
@@ -39,6 +39,16 @@ function codePoint(n: number, fallback: string): string {
   }
 }
 
+// 進捗率（MSPDI PercentComplete）。完了は 100、それ以外は progress を 0..100 の整数に丸める。
+const percentOf = (t: Task): number =>
+  t.status === 'DONE' ? 100 : Math.max(0, Math.min(100, Math.round(Number(t.progress) || 0)));
+
+// MSPDI の日時（例: 2026-01-05T08:00:00）から日付部分。不正なら null。
+const datePart = (s: string): string | null => {
+  const d = s.slice(0, 10);
+  return isValidIsoDate(d) ? d : null;
+};
+
 // ---- エクスポート: GraphDoc → MSPDI XML。cpm を渡すと Start/Finish を書き出す ----
 export function toMspdi(doc: GraphDoc, cpm?: CpmResult | null): string {
   const idToUid = new Map<string, number>();
@@ -64,11 +74,26 @@ export function toMspdi(doc: GraphDoc, cpm?: CpmResult | null): string {
         )
         .join('');
       const r = cpm?.byTask.get(t.id);
-      // CPM の ef は排他的終端（最終稼働日の翌日）。MSP の Finish は最終作業日の終業時刻なので 1 日戻す。
+      // Finish は最終作業日の終業時刻（CPM の finishDate はその日を含む終了日。実績完了があればその日）。
       const hasWork = !t.isMilestone && t.durationDays > 0;
-      const finish = r ? (hasWork ? `${addCalendarDays(r.efDate, -1)}T17:00:00` : `${r.esDate}T08:00:00`) : '';
+      const finish = r ? (hasWork ? `${r.finishDate}T17:00:00` : `${r.esDate}T08:00:00`) : '';
       const dates = r ? `\n      <Start>${r.esDate}T08:00:00</Start>\n      <Finish>${finish}</Finish>` : '';
-      return `\n    <Task>\n      <UID>${uid}</UID>\n      <ID>${uid}</ID>\n      <Name>${escXml(t.name)}</Name>\n      <WBS>${escXml(t.wbsCode)}</WBS>\n      <OutlineNumber>${escXml(t.wbsCode)}</OutlineNumber>\n      <OutlineLevel>${outlineLevel}</OutlineLevel>\n      <Duration>${dur}</Duration>\n      <DurationFormat>7</DurationFormat>\n      <Milestone>${t.isMilestone ? 1 : 0}</Milestone>\n      <Summary>0</Summary>${dates}${links}\n    </Task>`;
+      const progress = `\n      <PercentComplete>${percentOf(t)}</PercentComplete>`;
+      const actuals =
+        (t.actualStart ? `\n      <ActualStart>${t.actualStart.slice(0, 10)}T08:00:00</ActualStart>` : '') +
+        (t.actualFinish
+          ? `\n      <ActualFinish>${t.actualFinish.slice(0, 10)}T${t.isMilestone ? '08' : '17'}:00:00</ActualFinish>`
+          : '');
+      const baseline =
+        t.baselineStart || t.baselineFinish
+          ? `\n      <Baseline>\n        <Number>0</Number>` +
+            (t.baselineStart ? `\n        <Start>${t.baselineStart.slice(0, 10)}T08:00:00</Start>` : '') +
+            (t.baselineFinish
+              ? `\n        <Finish>${t.baselineFinish.slice(0, 10)}T${t.isMilestone ? '08' : '17'}:00:00</Finish>`
+              : '') +
+            `\n      </Baseline>`
+          : '';
+      return `\n    <Task>\n      <UID>${uid}</UID>\n      <ID>${uid}</ID>\n      <Name>${escXml(t.name)}</Name>\n      <WBS>${escXml(t.wbsCode)}</WBS>\n      <OutlineNumber>${escXml(t.wbsCode)}</OutlineNumber>\n      <OutlineLevel>${outlineLevel}</OutlineLevel>\n      <Duration>${dur}</Duration>\n      <DurationFormat>7</DurationFormat>\n      <Milestone>${t.isMilestone ? 1 : 0}</Milestone>\n      <Summary>0</Summary>${dates}${progress}${actuals}${links}${baseline}\n    </Task>`;
     })
     .join('');
 
@@ -91,9 +116,19 @@ export function fromMspdi(xml: string, by = '私'): { tasks: Task[]; dependencie
     durDays: number;
     milestone: boolean;
     links: { predUid: string; type: number; lagDays: number }[];
+    status: Status;
+    progress: number;
+    actualStart: string | null;
+    actualFinish: string | null;
+    baselineStart: string | null;
+    baselineFinish: string | null;
   }
   const parsed: P[] = [];
-  for (const block of taskBlocks) {
+  const baselineRe = /<Baseline(?:\s[^>]*)?>[\s\S]*?<\/Baseline>/g;
+  for (const block0 of taskBlocks) {
+    // ベースライン要素は Start/Finish/Duration を含むため、本体の項目読み取りから外して別に読む。
+    const baselines: string[] = block0.match(baselineRe) ?? [];
+    const block = block0.replace(baselineRe, '');
     if (field(block, 'Summary') === '1') continue; // 要約タスク（WBS親）は除外
     const uid = field(block, 'UID');
     if (!uid) continue;
@@ -112,6 +147,14 @@ export function fromMspdi(xml: string, by = '私'): { tasks: Task[]; dependencie
         lagDays: Math.round(Number(field(lb, 'LinkLag') || 0) / (MIN_PER_DAY * 10)),
       });
     }
+    // 進捗: 実績完了（または100%）→完了、実績開始（または進捗あり）→作業中、それ以外は未着手。
+    const actualStart = datePart(field(block, 'ActualStart'));
+    const actualFinish = datePart(field(block, 'ActualFinish'));
+    const pcRaw = Number(field(block, 'PercentComplete'));
+    const pc = Number.isFinite(pcRaw) ? Math.max(0, Math.min(100, Math.round(pcRaw))) : 0;
+    const status: Status = actualFinish || pc >= 100 ? 'DONE' : actualStart || pc > 0 ? 'IN_PROGRESS' : 'NOT_STARTED';
+    // ベースラインは番号0（Number 省略も0扱い）のみ取り込む。
+    const base0 = baselines.find((b) => (field(b, 'Number') || '0') === '0');
     parsed.push({
       uid,
       name: decXml(field(block, 'Name')),
@@ -119,15 +162,33 @@ export function fromMspdi(xml: string, by = '私'): { tasks: Task[]; dependencie
       durDays,
       milestone,
       links,
+      status,
+      progress: status === 'DONE' ? 100 : pc,
+      actualStart,
+      actualFinish,
+      baselineStart: base0 ? datePart(field(base0, 'Start')) : null,
+      baselineFinish: base0 ? datePart(field(base0, 'Finish')) : null,
     });
   }
 
   const uidToId = new Map<string, string>();
   const tasks: Task[] = parsed.map((p) => {
     const t = makeTask(
-      { name: p.name || '（無題）', wbsCode: p.wbs, durationDays: p.durDays, isMilestone: p.milestone },
+      {
+        name: p.name || '（無題）',
+        wbsCode: p.wbs,
+        durationDays: p.durDays,
+        isMilestone: p.milestone,
+        status: p.status,
+        progress: p.progress,
+      },
       by,
     );
+    // 実績/ベースラインは値があるときだけ付ける（無いタスクは従来どおりの形）。
+    if (p.actualStart) t.actualStart = p.actualStart;
+    if (p.actualFinish) t.actualFinish = p.actualFinish;
+    if (p.baselineStart) t.baselineStart = p.baselineStart;
+    if (p.baselineFinish) t.baselineFinish = p.baselineFinish;
     uidToId.set(p.uid, t.id);
     return t;
   });

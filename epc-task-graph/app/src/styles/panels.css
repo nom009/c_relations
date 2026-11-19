@@ -219,14 +219,6 @@
 .depadder-item .mono {
   color: var(--muted);
 }
-@media (prefers-color-scheme: dark) {
-  .depadder-list {
-    background: #0f172a;
-  }
-  .depadder-item:hover {
-    background: #1e293b;
-  }
-}
 .legend span {
   display: inline-flex;
   align-items: center;
@@ -245,3 +237,80 @@
   color: var(--muted);
 }
 
+/* CSV 取込: メッセージ一覧ダイアログと「現在のプロジェクトを更新」確認ダイアログ */
+.message-list-dialog .message-list-count {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.message-list-dialog .message-list {
+  max-height: min(360px, 50dvh);
+  overflow: auto;
+  margin: 0;
+  padding: 8px 12px 8px 28px;
+  border: 1px solid #e1e7f0;
+  border-radius: 8px;
+  background: #fafbfe;
+  font-size: 13px;
+  line-height: 1.7;
+  user-select: text;
+}
+.message-list-dialog .dialog-footer {
+  align-items: center;
+}
+.message-list-copied {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.csv-merge-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.csv-merge-summary > div {
+  padding: 8px 10px;
+  border: 1px solid #e1e7f0;
+  border-radius: 8px;
+  text-align: center;
+}
+.csv-merge-summary dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.csv-merge-summary dd {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+.csv-merge-summary > .is-danger {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.dialog-body p.csv-merge-deps,
+.dialog-body p.csv-merge-note {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.dialog-body .csv-merge-warn {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 13px;
+}
+.dialog-body .csv-merge-warn p {
+  margin: 0;
+  font-size: 13px;
+}
+.csv-merge-warn ul {
+  max-height: 180px;
+  overflow: auto;
+  margin: 6px 0;
+  padding-left: 20px;
+}

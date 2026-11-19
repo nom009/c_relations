@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useApp, selectActiveCalendar, selectReadOnly } from "../../store/store";
-import { isValidIsoDate } from "../../domain";
+import { isValidIsoDate, mergeHolidays } from "../../domain";
 import { API_MODE } from "../../storage/mode";
 import { Dialog } from "./Dialog";
+import { HolidayPresets } from "../HolidayPresets";
 export function SettingsDialog({
   onClose,
   isNew = false,
@@ -133,6 +134,20 @@ export function SettingsDialog({
                     onChange={(e) => setHolidays(e.target.value)}
                   />
                 </label>
+                {/* プリセットはストアへ即時反映し、編集中の下書きにも取り込む */}
+                <HolidayPresets
+                  showStatus
+                  canClear={holidays.trim() !== "" || (cal?.holidays.length ?? 0) > 0}
+                  onAdded={(dates) =>
+                    setHolidays((h) =>
+                      mergeHolidays(
+                        h.split(/[\s,]+/).filter(isValidIsoDate),
+                        dates,
+                      ).join("\n"),
+                    )
+                  }
+                  onCleared={() => setHolidays("")}
+                />
               </details>
               <div className="storage-note">
                 {API_MODE ? (

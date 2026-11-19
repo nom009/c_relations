@@ -5,22 +5,29 @@
 //   全曜日稼働＋祝日なしなら線形で高速化＝従来挙動を厳密維持）に対応。所要日数は稼働日で数え、
 //   es/ef は暦日オフセット（ガントの線形軸を保つ）、開始基準日は project.dataDate。
 // 内部は「projectStart からの暦日オフセット（number）」で計算し、表示用に実日付へ変換。
+// 進捗（P6 方式の Progress Override）: 完了タスクは実績日に固定、着手済みタスクは残所要を
+//   基準日以降に置く（先行の制約は無視）。未着手タスクは従来どおり計画で計算する。
 // 性能: O(V+E)、4,000ノード・6,000エッジで <20ms（§9.1）。メインスレッド同期でよい。
 // ============================================================================
 import type { Dependency, Task } from './types';
 import { buildAdjacency } from './graph';
+import { progressState, type ProgressState } from './schedule';
 
 export interface CpmTaskResult {
   es: number; // Early Start（暦日オフセット）
   ef: number; // Early Finish
   ls: number; // Late Start
   lf: number; // Late Finish
-  totalFloat: number; // LS − ES（= LF − EF）
-  isCritical: boolean; // TF ≤ 0
+  totalFloat: number; // 未着手: LS − ES ／ 着手済み: LF − EF ／ 完了: 0
+  isCritical: boolean; // TF ≤ 0（完了タスクは常に false）
   esDate: string; // ES の実日付（yyyy-mm-dd）
-  efDate: string;
+  efDate: string; // EF の実日付（排他的終端＝終了日の翌日相当）
   lsDate: string;
   lfDate: string;
+  finishDate: string; // 表示用の終了日（その日を含む）。完了＋実績完了日ありはその日
+  lateFinishDate: string; // 表示用の最遅終了日（その日を含む）
+  remainingDays: number; // 残所要（稼働日）。完了 0 ／ 着手済み 残り ／ 未着手 所要日数
+  state: ProgressState;
 }
 
 export interface CpmResult {
@@ -31,6 +38,8 @@ export interface CpmResult {
   projectEnd: number; // max(全EF)
   projectStartDate: string; // = dataDate
   projectEndDate: string;
+  projectFinishDate: string; // 全タスクの finishDate の最大（その日を含む）
+  minStart: number; // min(0, 全ES)。実績が基準日より前に遡る分（負）
 }
 
 // yyyy-mm-dd に n 日加算（暦日。UTC 固定でオフバイワン回避）。
@@ -50,24 +59,11 @@ function parseISODate(iso: string): number {
   return Number.isNaN(t) ? Date.UTC(2000, 0, 1) : t;
 }
 
-const EMPTY: Omit<CpmResult, 'projectStartDate' | 'projectEndDate'> & {
-  projectStartDate: string;
-  projectEndDate: string;
-} = {
-  byTask: new Map(),
-  criticalTasks: new Set(),
-  criticalEdges: new Set(),
-  projectStart: 0,
-  projectEnd: 0,
-  projectStartDate: '',
-  projectEndDate: '',
-};
-
 /**
- * CPM（暦日・FS/SS/FF/SF＋lag）を計算する。
- * @param tasks       タスク配列（durationDays を使用。milestone は 0）
+ * CPM（暦日・FS/SS/FF/SF＋lag・進捗考慮）を計算する。
+ * @param tasks       タスク配列（durationDays を使用。milestone は 0。status/progress/実績日で進捗を反映）
  * @param deps        依存配列（type=FS/SS/FF/SF・lagDays を尊重。負の lag はリード）
- * @param projectStart 開始基準日（yyyy-mm-dd。通常 project.dataDate）
+ * @param projectStart 開始基準日（yyyy-mm-dd。通常 project.dataDate＝進捗の締め日）
  */
 export function computeCpm(
   tasks: Task[],
@@ -76,7 +72,18 @@ export function computeCpm(
   calendar?: { workingDays: number[]; holidays: string[] } | null,
 ): CpmResult {
   if (tasks.length === 0) {
-    return { ...EMPTY, byTask: new Map(), criticalTasks: new Set(), criticalEdges: new Set(), projectStartDate: (projectStart || '').slice(0, 10), projectEndDate: (projectStart || '').slice(0, 10) };
+    const d0 = (projectStart || '').slice(0, 10);
+    return {
+      byTask: new Map(),
+      criticalTasks: new Set(),
+      criticalEdges: new Set(),
+      projectStart: 0,
+      projectEnd: 0,
+      projectStartDate: d0,
+      projectEndDate: d0,
+      projectFinishDate: d0,
+      minStart: 0,
+    };
   }
 
   const taskById = new Map<string, Task>();
@@ -197,6 +204,34 @@ export function computeCpm(
     (outgoing.get(d.predecessorId) ?? outgoing.set(d.predecessorId, []).get(d.predecessorId)!).push(d);
   }
 
+  // ---- 進捗状態（P6 方式）: 完了=実績で固定／着手済み=残所要を基準日以降へ／未着手=計画 ----
+  const stateOf = new Map<string, ProgressState>();
+  for (const t of tasks) stateOf.set(t.id, progressState(t));
+  const rem = new Map<string, number>(); // 後退計算で使う所要（完了 0 ／ 着手済み 残り ／ 未着手 所要）
+  const t0 = nextWorking(0); // 基準日以降の最初の稼働日（残作業の再開点）
+  // 着手済みの残所要（稼働日）: ceil(D×(100−進捗)/100) を [0, D] に収める。
+  const remainingOf = (t: Task, d: number): number => {
+    if (d === 0) return 0;
+    const p = Number.isFinite(t.progress) ? t.progress : 0;
+    return Math.min(d, Math.max(0, Math.ceil((d * (100 - p)) / 100 - 1e-9)));
+  };
+  // 完了タスクの [ES, EF]（実績日を優先。終了実績はその日を含むため EF=翌日）。
+  const doneSpan = (t: Task, d: number): [number, number] => {
+    const sAct = t.actualStart ? constraintOffset(t.actualStart) : null;
+    const fAct = t.actualFinish ? constraintOffset(t.actualFinish) : null;
+    if (t.isMilestone) {
+      const m = fAct ?? sAct ?? 0;
+      return [m, m];
+    }
+    if (sAct != null && fAct != null) return [sAct, Math.max(fAct + 1, sAct)];
+    if (fAct != null) return [subWorkingDays(fAct + 1, d), fAct + 1];
+    if (sAct != null) {
+      const f = addWorkingDays(sAct, d);
+      return [sAct, sAct > 0 ? f : Math.max(sAct, Math.min(f, 0))];
+    }
+    return [subWorkingDays(0, d), 0]; // 実績なし: 基準日の直前に終わったものとみなす
+  };
+
   // ---- 前進計算（トポ順）: 依存タイプ＋lag で後続の最早開始下限を課す（§9.1-2 / Phase2）----
   // FS: ES_s ≥ EF_p+lag ／ SS: ES_s ≥ ES_p+lag ／ FF: EF_s ≥ EF_p+lag ／ SF: EF_s ≥ ES_p+lag
   //   （EF系は ES = 下限 − dur(s) に変換）。lag は負でリード。ES は 0（基準日）を下限に丸める。
@@ -220,13 +255,31 @@ export function computeCpm(
   };
   for (const id of order) {
     const d = dur(id);
+    const t = taskById.get(id);
+    const st = stateOf.get(id);
+    if (t && st === 'done') {
+      const [s, f] = doneSpan(t, d);
+      es.set(id, s);
+      ef.set(id, f);
+      rem.set(id, 0);
+      continue;
+    }
+    if (t && st === 'started') {
+      // 着手済み: 開始は実績（無ければ進捗分を基準日から遡る）、残所要は基準日以降（先行・SNET は無視）。
+      const r = remainingOf(t, d);
+      const s = t.actualStart ? constraintOffset(t.actualStart) : subWorkingDays(t0, d - r);
+      const rs = Math.max(t0, s);
+      es.set(id, s);
+      ef.set(id, r > 0 ? addWorkingDays(rs, r) : rs);
+      rem.set(id, r);
+      continue;
+    }
     let start = 0;
     for (const dep of incoming.get(id) ?? []) {
       const req = forwardReq(dep.type, dep.predecessorId, dep.lagDays || 0, d);
       if (req > start) start = req;
     }
     // SNET（Start No Earlier Than）: この日以降にしか開始できない → ES を下限で丸める。
-    const t = taskById.get(id);
     if (t && t.constraintType === 'SNET' && t.constraintDate) {
       const off = constraintOffset(t.constraintDate);
       if (off > start) start = off;
@@ -234,6 +287,7 @@ export function computeCpm(
     start = nextWorking(start); // ES は稼働日に丸める
     es.set(id, start);
     ef.set(id, addWorkingDays(start, d)); // EF は稼働日 d 日分先（非稼働日は跨いで伸びる）
+    rem.set(id, d);
   }
 
   const projectEnd = Math.max(0, ...order.map((id) => ef.get(id) ?? 0));
@@ -241,15 +295,25 @@ export function computeCpm(
   // ---- 後退計算（逆トポ順）: 依存タイプ＋lag で先行の最遅終了上限を課す（§9.1-3 / Phase2）----
   // FS: LF_p ≤ LS_s−lag ／ SS: LS_p ≤ LS_s−lag ／ FF: LF_p ≤ LF_s−lag ／ SF: LS_p ≤ LF_s−lag
   //   （LS系は LF = 上限 + dur(p) に変換）。後続なしは projectEnd。
+  // 進捗: 完了タスクは LS/LF=ES/EF に固定し、後続としても制約しない。着手済みの後続は
+  //   開始済みのため FS/SS（開始側）を無視し FF/SF（終了側）だけ効かせる。着手済みは残所要で換算。
   const ls = new Map<string, number>();
   const lf = new Map<string, number>();
   for (let i = order.length - 1; i >= 0; i--) {
     const id = order[i];
-    const d = dur(id);
+    if (stateOf.get(id) === 'done') {
+      ls.set(id, es.get(id) ?? 0);
+      lf.set(id, ef.get(id) ?? 0);
+      continue;
+    }
+    const d = rem.get(id) ?? dur(id);
     // LF は projectEnd を上限に、各後続の要求で更に絞る（SS/SF や負ラグで projectEnd を超える要求は無視）。
     let finish = projectEnd;
     for (const dep of outgoing.get(id) ?? []) {
       const s = dep.successorId;
+      const sState = stateOf.get(s);
+      if (sState === 'done') continue;
+      if (sState === 'started' && dep.type !== 'FF' && dep.type !== 'SF') continue;
       const lag = dep.lagDays || 0;
       let req: number;
       switch (dep.type) {
@@ -281,18 +345,37 @@ export function computeCpm(
     ls.set(id, subWorkingDays(finish, d)); // LS は稼働日 d 日分を後退（非稼働日は跨ぐ）
   }
 
-  // ---- TF = LS − ES、TF ≤ 0 がクリティカル（§9.1-4）----
+  // ---- TF: 未着手 LS − ES ／ 着手済み LF − EF（終了余裕）／ 完了 0。TF ≤ 0 がクリティカル（§9.1-4）----
+  // 表示用の終了日（その日を含む）: EF は排他的終端なので、直前の稼働日へ戻す（開始日より前にはしない）。
+  const inclusiveEnd = (s: number, f: number, sDate: string, milestone: boolean): string => {
+    if (milestone) return dateAt(f);
+    if (f <= s) return sDate;
+    const d = dateAt(prevWorking(f - 1));
+    return d < sDate ? sDate : d;
+  };
   const byTask = new Map<string, CpmTaskResult>();
   const criticalTasks = new Set<string>();
+  let projectFinishDate = '';
+  let minStart = 0;
   for (const t of tasks) {
     const id = t.id;
+    const state = stateOf.get(id) ?? 'planned';
     const _es = es.get(id) ?? 0;
     const _ef = ef.get(id) ?? 0;
     const _ls = ls.get(id) ?? 0;
     const _lf = lf.get(id) ?? 0;
-    const tf = Math.round((_ls - _es) * 1000) / 1000;
-    const crit = tf <= 0;
+    const tf = state === 'done' ? 0 : Math.round((state === 'started' ? _lf - _ef : _ls - _es) * 1000) / 1000;
+    const crit = state !== 'done' && tf <= 0;
     if (crit) criticalTasks.add(id);
+    const esDate = dateAt(_es);
+    const lsDate = dateAt(_ls);
+    const finishDate =
+      state === 'done' && t.actualFinish
+        ? t.actualFinish.slice(0, 10)
+        : inclusiveEnd(_es, _ef, esDate, t.isMilestone);
+    const lateFinishDate = state === 'done' ? finishDate : inclusiveEnd(_ls, _lf, lsDate, t.isMilestone);
+    if (finishDate > projectFinishDate) projectFinishDate = finishDate;
+    if (_es < minStart) minStart = _es;
     byTask.set(id, {
       es: _es,
       ef: _ef,
@@ -300,17 +383,23 @@ export function computeCpm(
       lf: _lf,
       totalFloat: tf,
       isCritical: crit,
-      esDate: dateAt(_es),
+      esDate,
       efDate: dateAt(_ef),
-      lsDate: dateAt(_ls),
+      lsDate,
       lfDate: dateAt(_lf),
+      finishDate,
+      lateFinishDate,
+      remainingDays: state === 'done' ? 0 : rem.get(id) ?? dur(id),
+      state,
     });
   }
 
   // ---- 駆動依存（クリティカルなエッジ）: 両端がクリティカルで、後続ESがこの依存の前進要件に一致 ----
+  //   完了済みの先行・着手済みの後続は前進要件で開始が決まらないため対象外。
   const criticalEdges = new Set<string>();
   for (const d of deps) {
     if (!criticalTasks.has(d.predecessorId) || !criticalTasks.has(d.successorId)) continue;
+    if (stateOf.get(d.predecessorId) === 'done' || stateOf.get(d.successorId) !== 'planned') continue;
     const s = d.successorId;
     // 後続 ES は前進計算で 0 下限・稼働日丸めされているため、要件も同じ丸めをして比較する。
     const req = nextWorking(Math.max(0, forwardReq(d.type, d.predecessorId, d.lagDays || 0, dur(s))));
@@ -326,5 +415,7 @@ export function computeCpm(
     projectEnd,
     projectStartDate: startDate,
     projectEndDate: dateAt(projectEnd),
+    projectFinishDate,
+    minStart,
   };
 }

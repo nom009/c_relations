@@ -18,6 +18,8 @@ import { useCpm } from "../store/hooks";
 import { CanvasArea } from "./CanvasArea";
 import { TableView } from "./table/TableView";
 import { GanttView } from "./gantt/GanttView";
+import { VIEW_NAV } from "./views";
+import { MOD_LABEL } from "./keyboard";
 
 // フィルタ状態バナー（何で絞っているかを一目で・件数つき・ワンクリック解除）。
 // 「filter したものだけを分かりやすく」の中核: 今の絞り込みを言語化して常に見せる。
@@ -123,8 +125,8 @@ function HelpButton() {
           <h4>まず絞る → それから見る</h4>
           <p className="help-lead">
             4,000件を一度に見るのは非現実的です。
-            <b>担当・工区・CPで絞ってから</b>グラフ／テーブル
-            ／ガントで確認するのが実運用の基本です。
+            <b>担当・WBS・CPで絞ってから</b>依存関係／ガントチャート
+            ／タスク一覧で確認するのが実運用の基本です。
           </p>
           <div className="help-sec">絞り込み（左パネル）</div>
           <ul>
@@ -135,7 +137,7 @@ function HelpButton() {
               <b>CPのみ</b> … 遅れると全体が遅れる背骨だけ
             </li>
             <li>
-              <b>WBSツリー</b> … 工区（枝）をクリックでその範囲だけ
+              <b>WBSツリー</b> … WBS（枝）をクリックでその範囲だけ
             </li>
             <li>
               <b>保存ビュー ★</b> … よく使う絞り込みを起動時に自動適用
@@ -144,22 +146,22 @@ function HelpButton() {
           <div className="help-sec">3つのビュー</div>
           <ul>
             <li>
-              <b>グラフ（G）</b> … 依存関係を編集。ハンドルからドラッグで接続
+              <b>依存関係（G）</b> … タスクのつながりを編集。ハンドルからドラッグで接続
             </li>
             <li>
-              <b>テーブル（T）</b> … 一覧・並べ替え・一括編集
+              <b>ガントチャート（Y）</b> … 時間軸。バー右端ドラッグで工期変更
             </li>
             <li>
-              <b>ガント（Y）</b> … 時間軸。バー右端ドラッグで工期変更
+              <b>タスク一覧（T）</b> … 一覧・並べ替え・一括編集
             </li>
           </ul>
           <div className="help-sec">主なキー操作</div>
           <ul className="help-keys">
             <li>
-              <kbd>G</kbd>/<kbd>T</kbd>/<kbd>Y</kbd> ビュー切替
+              <kbd>G</kbd>/<kbd>Y</kbd>/<kbd>T</kbd> ビュー切替
             </li>
             <li>
-              <kbd>⌘/Ctrl</kbd>+<kbd>K</kbd> 検索してジャンプ
+              <kbd>{MOD_LABEL}</kbd>+<kbd>K</kbd> 検索してジャンプ
             </li>
             <li>
               <kbd>H</kbd> 選択タスクの関係先をハイライト（世代指定可）
@@ -168,13 +170,14 @@ function HelpButton() {
               <kbd>N</kbd> 新規タスク ／ <kbd>Tab</kbd> 後続を作成
             </li>
             <li>
-              <kbd>Delete</kbd> 削除 ／ <kbd>⌘/Ctrl</kbd>+<kbd>Z</kbd> 取り消し
+              <kbd>Delete</kbd> 削除 ／ <kbd>{MOD_LABEL}</kbd>+<kbd>Z</kbd> 取り消し
+              ／ <kbd>{MOD_LABEL}</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> やり直し
             </li>
           </ul>
           <div className="help-sec">データ</div>
           <ul>
             <li>
-              <b>データ ▾</b> … JSON / MS Project(MSPDI) の出力・取込
+              <b>データ ▾</b> … JSON / CSV / MS Project(MSPDI) の出力・取込
             </li>
           </ul>
         </div>
@@ -241,9 +244,9 @@ export function ViewShell() {
     <div className="viewshell">
       <div className="viewtabs-bar">
         <div className="viewtabs">
-          <Tab view="graph" label="依存関係" hint="G" />
-          <Tab view="table" label="タスク一覧" hint="T" />
-          <Tab view="gantt" label="ガント" hint="Y" />
+          {VIEW_NAV.map((v) => (
+            <Tab key={v.id} view={v.id} label={v.label} hint={v.key} />
+          ))}
         </div>
         <div className="view-toolbar-actions">
           <select
@@ -260,7 +263,7 @@ export function ViewShell() {
             <option value="" disabled>
               表示階層
             </option>
-            <option value="group">工区ごとにまとめる</option>
+            <option value="group">WBSごとにまとめる</option>
             <option value="all">タスクをすべて展開</option>
           </select>
           <button

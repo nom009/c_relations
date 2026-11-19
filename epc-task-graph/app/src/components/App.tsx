@@ -9,7 +9,9 @@ import { LeftPanel } from "./LeftPanel";
 import { RightPanel } from "./RightPanel";
 import { SearchPalette } from "./SearchPalette";
 import { Overview } from "./workspace/Overview";
-import { Icon, type IconName } from "./workspace/Icon";
+import { Icon } from "./workspace/Icon";
+import { VIEW_NAV as views } from "./views";
+import { modKey } from "./keyboard";
 
 // サーバー版専用ダイアログ。ローカル版ビルドでは定数分岐で除去され、チャンクも生成されない。
 const ConflictDialog = API_MODE
@@ -32,12 +34,6 @@ const MembersDialog = API_MODE
 const loadViewShell = () => import("./ViewShell");
 const ViewShell = lazy(() => loadViewShell().then((m) => ({ default: m.ViewShell })));
 
-const views: { id: ActiveView; label: string; icon: IconName; key: string }[] =
-  [
-    { id: "graph", label: "依存関係", icon: "graph", key: "G" },
-    { id: "gantt", label: "ガントチャート", icon: "gantt", key: "Y" },
-    { id: "table", label: "タスク一覧", icon: "table", key: "T" },
-  ];
 export function App() {
   const [overview, setOverview] = useState(true),
     [filters, setFilters] = useState(false),
@@ -132,7 +128,7 @@ export function App() {
         >
           <Icon name="search" />
           <span>タスクを検索</span>
-          <kbd>⌘ K</kbd>
+          <kbd>{modKey("K")}</kbd>
         </button>
         <div className="nav-section-label">ワークスペース</div>
         <nav aria-label="メインナビゲーション">

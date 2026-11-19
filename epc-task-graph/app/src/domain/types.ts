@@ -32,6 +32,12 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   updatedBy: string;
+  // 実績（P6 方式・任意）。暦日 'YYYY-MM-DD'。終了日はその日を含む（当日完了）。
+  actualStart?: string | null;
+  actualFinish?: string | null;
+  // ベースライン（計画の凍結値・任意）。'YYYY-MM-DD'。終了日はその日を含む。
+  baselineStart?: string | null;
+  baselineFinish?: string | null;
 }
 
 export interface Dependency {
@@ -50,10 +56,11 @@ export interface ProjectMeta {
   name: string;
   description: string;
   calendarId: string;
-  dataDate: string; // ステータス基準日（CPM開始点）
+  dataDate: string; // 基準日＝進捗の締め日（P6 の Data Date）。残作業はこの日以降で計算する
   createdAt: string;
   updatedAt: string;
   version: number; // プロジェクト全体の単調増加版数（楽観ロックの粗い錠）
+  wbsNames?: Record<string, string>; // WBS コード → 名称（任意）
 }
 
 export interface ViewState {

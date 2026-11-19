@@ -2,6 +2,8 @@
 @import '@xyflow/react/dist/style.css';
 
 :root {
+  /* ライトテーマ専用: OSがダークでもフォーム部品・スクロールバーを明色で描画する */
+  color-scheme: light;
   --disc-E: #2563eb;
   --disc-P: #d97706;
   --disc-C: #059669;

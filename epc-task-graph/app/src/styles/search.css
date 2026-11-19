@@ -66,11 +66,3 @@
   color: var(--muted);
   text-align: center;
 }
-@media (prefers-color-scheme: dark) {
-  .search-box {
-    background: #0f172a;
-  }
-  .search-item.active {
-    background: #1e293b;
-  }
-}

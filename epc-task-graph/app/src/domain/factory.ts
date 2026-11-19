@@ -52,6 +52,11 @@ export function makeTask(p: Partial<Task> = {}, by = '私'): Task {
     createdAt: p.createdAt || ts,
     updatedAt: p.updatedAt || ts,
     updatedBy: p.updatedBy || by,
+    // 実績・ベースラインは指定時のみ持たせる（未指定行の形を変えない）
+    ...(p.actualStart !== undefined ? { actualStart: p.actualStart } : {}),
+    ...(p.actualFinish !== undefined ? { actualFinish: p.actualFinish } : {}),
+    ...(p.baselineStart !== undefined ? { baselineStart: p.baselineStart } : {}),
+    ...(p.baselineFinish !== undefined ? { baselineFinish: p.baselineFinish } : {}),
   };
 }
 

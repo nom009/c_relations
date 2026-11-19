@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { fromCsv, toCsv, csvTemplate, parseCsvRows, parseCsvDate, decodeCsvBytes, validateDoc, emptyDoc } from '../../src/domain';
+import { fromCsv, toCsv, csvTemplate, parseCsvRows, parseCsvDate, decodeCsvBytes, validateDoc, emptyDoc, CSV_COLUMNS } from '../../src/domain';
+import { showcaseDoc } from '../../src/domain/showcase';
 
+// 旧形式（No/ID/実績列なし・「分類」見出し）でも読めることを確かめる。
 const H = 'WBS,タスク名,分類,所要日数,マイルストーン,先行タスク,ステータス,進捗(%),担当,開始日,期限,備考';
 
 describe('CSV 取込', () => {
@@ -57,7 +59,7 @@ describe('CSV 取込', () => {
     ]);
   });
 
-  it('行番号付きでエラーを返す（不明WBS・重複WBS・不正値・開始日と期限の併記）', () => {
+  it('行番号付きでエラーを返す（不明な先行・不正値・開始日と期限の併記）。WBS の重複は許す', () => {
     const csv = [
       H,
       '1,A,設計,3,,,,,,,,',
@@ -66,8 +68,8 @@ describe('CSV 取込', () => {
       '3,D,,3,,9,,,,,,',
     ].join('\n');
     const r = fromCsv(csv);
-    expect(r.errors).toContain('3行目: WBS「1」が2行目と重複しています');
-    expect(r.errors.some((e) => e.startsWith('4行目: 分類「土木」'))).toBe(true);
+    expect(r.errors.some((e) => e.includes('WBS「1」'))).toBe(false);
+    expect(r.errors.some((e) => e.startsWith('4行目: 工種「土木」'))).toBe(true);
     expect(r.errors.some((e) => e.startsWith('4行目: 所要日数「x」'))).toBe(true);
     expect(r.errors.some((e) => e.startsWith('4行目: 進捗「150」'))).toBe(true);
     expect(r.errors.some((e) => e.startsWith('4行目: 開始日と期限'))).toBe(true);
@@ -127,6 +129,112 @@ describe('CSV 取込', () => {
     expect(back.dependencies.map((d) => [d.type, d.lagDays])).toEqual(
       src.dependencies.map((d) => [d.type, d.lagDays]),
     );
+  });
+
+  it('テンプレートは16列（先頭 No・末尾 ID）で、先行タスクは No で書く', () => {
+    const rows = parseCsvRows(csvTemplate());
+    expect(rows[0]).toEqual([...CSV_COLUMNS]);
+    expect(rows[0].length).toBe(16);
+    expect(rows.every((r) => r.length === 16)).toBe(true);
+    expect(rows[3][6]).toBe('2SS+5');
+  });
+
+  it('WBS が重複していても No で先行タスクを指定できる（種類・ラグ付き、"03" は 3）', () => {
+    const r = fromCsv(
+      [
+        'No,WBS,タスク名,所要日数,先行タスク',
+        '1,1.1,A,3,',
+        '2,1.1,B,4,1',
+        '03,1.2,C,2,"1FS+2, 2SS-1日"',
+        '4,1.2,D,1,3',
+      ].join('\n'),
+    );
+    expect(r.errors).toEqual([]);
+    const name = new Map(r.tasks.map((t) => [t.id, t.name]));
+    expect(r.dependencies.map((d) => [name.get(d.predecessorId), name.get(d.successorId), d.type, d.lagDays])).toEqual([
+      ['A', 'B', 'FS', 0],
+      ['A', 'C', 'FS', 2],
+      ['B', 'C', 'SS', -1],
+      ['C', 'D', 'FS', 0],
+    ]);
+  });
+
+  it('No の重複はエラー（"01" と "1" は同じ番号）', () => {
+    const r = fromCsv(['No,WBS,タスク名,所要日数', '1,1,A,1', '01,2,B,1'].join('\n'));
+    expect(r.errors).toContain('3行目: No「1」が2行目と重複しています');
+  });
+
+  it('No 列が無く WBS が重複する旧形式は、先行タスクをデータ行の順番で読む', () => {
+    const ok = fromCsv(['WBS,タスク名,所要日数,先行タスク', '1.1,A,1,', '1.1,B,1,1', '1.2,C,1,2FS+1'].join('\n'));
+    expect(ok.errors).toEqual([]);
+    expect(ok.warnings.some((w) => w.includes('データ行の順番'))).toBe(true);
+    const name = new Map(ok.tasks.map((t) => [t.id, t.name]));
+    expect(ok.dependencies.map((d) => [name.get(d.predecessorId), name.get(d.successorId), d.lagDays])).toEqual([
+      ['A', 'B', 0],
+      ['B', 'C', 1],
+    ]);
+    const ng = fromCsv(['WBS,タスク名,所要日数,先行タスク', '1.1,A,1,', '1.1,B,1,1.1'].join('\n'));
+    expect(ng.errors[0]).toBe('3行目: 先行タスク「1.1」が見つかりません');
+    expect(ng.errors[1]).toMatch(/データ行の順番/);
+  });
+
+  it('ID 列: 正しい形式で一意なら Task.id に使い、重複はエラー、不正な形式は無視して警告', () => {
+    const r = fromCsv(['WBS,タスク名,所要日数,ID', '1,A,1,task_A-1', '2,B,1,', '3,C,1,不正 ID'].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(r.hasIds).toBe(true);
+    expect(r.tasks[0].id).toBe('task_A-1');
+    expect(r.tasks[1].id).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(r.tasks[2].id).not.toBe('不正 ID');
+    expect(r.warnings).toContain('4行目: ID「不正 ID」は形式が正しくないため無視し、新しいタスクとして扱います');
+    const dup = fromCsv(['WBS,タスク名,所要日数,ID', '1,A,1,x1', '2,B,1,x1'].join('\n'));
+    expect(dup.errors).toContain('3行目: ID「x1」が2行目と重複しています');
+  });
+
+  it('実績開始日・実績完了日を読み、不正な日付や前後の逆転はエラー', () => {
+    const r = fromCsv(
+      [
+        'WBS,タスク名,所要日数,実績開始日,実績完了日',
+        '1,A,5,2026/4/1,2026年4月10日',
+        '2,B,5,,',
+        '3,C,5,2026/4/31,',
+        '4,D,5,2026/4/10,2026/4/1',
+      ].join('\n'),
+    );
+    expect(r.errors).toEqual([
+      '4行目: 実績開始日「2026/4/31」を日付として読めません（例: 2026/4/1）',
+      '5行目: 実績完了日が実績開始日より前です',
+    ]);
+    expect(r.fields).toEqual(expect.arrayContaining(['actualStart', 'actualFinish']));
+    expect(r.tasks[0].actualStart).toBe('2026-04-01');
+    expect(r.tasks[0].actualFinish).toBe('2026-04-10');
+    expect(r.tasks[1].actualStart ?? null).toBeNull();
+    const text = toCsv(r.tasks, r.dependencies);
+    expect(text).toContain('2026/04/01,2026/04/10');
+  });
+
+  it('デモ（WBS を共有するタスクあり）を書き出して読み戻すと、件数・ID・依存・値が一致する', () => {
+    const doc = showcaseDoc();
+    const back = fromCsv(toCsv(doc.tasks, doc.dependencies));
+    expect(back.errors).toEqual([]);
+    expect(back.tasks.length).toBe(doc.tasks.length);
+    expect(back.dependencies.length).toBe(doc.dependencies.length);
+    expect(new Set(back.tasks.map((t) => t.id))).toEqual(new Set(doc.tasks.map((t) => t.id)));
+    const depKey = (d: { predecessorId: string; successorId: string; type: string; lagDays: number }) =>
+      `${d.predecessorId}>${d.successorId}:${d.type}${d.lagDays}`;
+    expect(back.dependencies.map(depKey).sort()).toEqual(doc.dependencies.map(depKey).sort());
+    const byId = new Map(doc.tasks.map((t) => [t.id, t]));
+    const vals = (t: (typeof doc.tasks)[number]) => [
+      t.name,
+      t.wbsCode,
+      t.discipline,
+      t.isMilestone,
+      t.durationDays,
+      t.status,
+      t.progress,
+      t.assignee,
+      t.notes,
+    ];
+    for (const t of back.tasks) expect(vals(t)).toEqual(vals(byId.get(t.id)!));
   });
 
   it('UTF-8 でなければ Shift_JIS として読む', () => {

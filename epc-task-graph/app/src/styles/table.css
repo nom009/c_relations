@@ -52,20 +52,6 @@
 .btn.danger:hover {
   background: #fef2f2;
 }
-@media (prefers-color-scheme: dark) {
-  .bulkbar {
-    background: #1e1b4b;
-    border-color: #3730a3;
-  }
-  .bulkbar .bulk-count {
-    color: #c7d2fe;
-  }
-  .bulkbar .bulk-select,
-  .bulkbar .bulk-assignee {
-    background: #0f172a;
-    color: inherit;
-  }
-}
 .table-scroll {
   flex: 1;
   min-height: 0;

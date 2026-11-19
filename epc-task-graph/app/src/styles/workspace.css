@@ -236,11 +236,48 @@ button svg {
   font-weight: 600;
   padding-left: 0;
 }
+/* 保存状態バッジ: 全幅で常時表示。狭い幅ではドット（エラー・競合は短い文言の札）に縮める */
 .header .savebadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
   font-size: 12px;
-  padding: 7px 2px 7px 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: #4b7762;
+  cursor: default;
+}
+.header .savebadge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.header .savebadge.dirty {
+  color: #64748b;
+}
+.header .savebadge.dirty .savebadge-dot {
+  background: #d97706;
+}
+.header .savebadge.error {
+  color: #a3283c;
+  background: #fdecef;
+  border-color: #f3c2cb;
+}
+/* サーバー版専用 */
+.header .savebadge.conflict {
+  color: #92400e;
+  background: #fff3d6;
+  border-color: #f0d28a;
+}
+.header .savebadge-short {
+  display: none;
 }
 .header .spacer {
   flex: 0;
@@ -249,6 +286,12 @@ button svg {
   font-size: 12px;
   padding: 6px 9px;
   background: none;
+}
+.header .header-undo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 .header .menu > .btn {
   font-size: 12px;
@@ -1151,7 +1194,12 @@ button svg {
   .workspace-main .header {
     padding-inline: 24px;
   }
-  .header .savebadge {
+  /* Undo/Redo は記号のみのアイコンボタンに縮める（名前は aria-label、ショートカットは title） */
+  .workspace-main .header .header-undo {
+    font-size: 15px;
+    padding: 3px 8px;
+  }
+  .header .header-undo-label {
     display: none;
   }
 }
@@ -1233,7 +1281,6 @@ button svg {
     height: 66px;
     min-height: 66px;
   }
-  .header > .btn,
   .header .spacer {
     display: none;
   }
@@ -1401,8 +1448,7 @@ button svg {
   font-size: 12px;
 }
 .workspace-heading p,
-.workspace-breadcrumb,
-.header .savebadge {
+.workspace-breadcrumb {
   font-size: 12px;
 }
 .workspace-heading h1 {
@@ -1560,10 +1606,6 @@ button svg {
 .header > .btn,
 .header .menu > .btn {
   font-size: 13px;
-}
-.header .savebadge {
-  font-size: 12px;
-  white-space: nowrap;
 }
 .header .projectbar select {
   max-width: 340px;
@@ -1764,6 +1806,30 @@ button svg {
   font-size: 12px;
   line-height: 1.8;
   border-radius: 7px;
+}
+/* 祝日プリセット（左パネル・設定ダイアログ共用） */
+.holiday-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 12px;
+}
+.holiday-presets-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.holiday-presets-buttons .btn {
+  font-size: 12px;
+  padding: 5px 9px;
+}
+.holiday-presets-buttons .btn:not(.danger) {
+  border-color: #e0e6f0;
+}
+.holiday-presets-note {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.6;
 }
 .inspector {
   width: 355px;
@@ -2178,8 +2244,21 @@ button svg {
     z-index: 36;
     box-shadow: -15px 0 35px #1b315b17;
   }
-  .workspace-main .header .savebadge {
-    display: none;
+  /* 保存済み・保存中はドットのみ、エラー・競合は短い文言の札に（全文は title と読み上げ用テキストで保持） */
+  .workspace-main .header .savebadge:not(.error):not(.conflict) {
+    padding: 6px;
+  }
+  .workspace-main .header .savebadge-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .workspace-main .header .savebadge-short {
+    display: inline;
   }
   .workspace-nav {
     width: 218px;
@@ -2559,14 +2638,6 @@ button svg {
   display: flex;
   gap: 8px;
 }
-.header .savebadge.error {
-  color: #bb4053;
-}
-/* サーバー版専用 */
-.header .savebadge.conflict {
-  color: #b45309;
-  font-weight: 600;
-}
 .role-badge {
   font-size: 12px;
   font-weight: 600;
@@ -2664,7 +2735,7 @@ button svg {
     display: none;
   }
   .workspace-main .header .projectbar select {
-    max-width: clamp(80px, calc(100vw - 235px), 220px) !important;
+    max-width: clamp(80px, calc(100vw - 330px), 220px) !important;
   }
   .viewtabs-bar {
     flex-wrap: wrap;
@@ -2672,6 +2743,15 @@ button svg {
   }
   .view-toolbar-actions .critical-toggle {
     min-height: 30px;
+  }
+}
+/* 最小幅: Undo/Redo ボタンは隠す（Ctrl/⌘+Z・Shift+Z のショートカットは引き続き有効） */
+@media (max-width: 480px) {
+  .workspace-main .header .header-undo {
+    display: none;
+  }
+  .workspace-main .header .projectbar select {
+    max-width: clamp(80px, calc(100vw - 260px), 220px) !important;
   }
 }
 

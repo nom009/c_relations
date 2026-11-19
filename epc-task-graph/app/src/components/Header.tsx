@@ -5,10 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { useApp, selectActiveCalendar, selectReadOnly, flushPersistence } from "../store/store";
 import { API_MODE, DEMO_MODE } from "../storage/mode";
+import { modKey, modShiftKey } from "./keyboard";
 import { selectCpm } from "../store/selectors";
 import { downloadJson } from "../store/backup";
 import { useSelectedTask } from "../store/hooks";
-import { validateDoc, parseDoc, cloneDocWithNewIds, wbsPath, toMspdi, fromMspdi, emptyDoc, migrateDoc, repairDoc, toCsv, fromCsv, csvTemplate, decodeCsvBytes } from "../domain";
+import { validateDoc, parseDoc, cloneDocWithNewIds, wbsPath, toMspdi, fromMspdi, emptyDoc, migrateDoc, repairDoc, toCsv, fromCsv, csvTemplate, decodeCsvBytes, planCsvMerge, type CsvImportResult, type CsvMergePlan } from "../domain";
+import { MessageListDialog } from "./workspace/MessageListDialog";
+import { CsvMergeDialog } from "./workspace/CsvMergeDialog";
 
 // UTF-8(BOM付き) で保存する＝Excel でダブルクリックしても文字化けしない。
 function downloadCsv(text: string, filename: string) {
@@ -20,11 +23,10 @@ function downloadCsv(text: string, filename: string) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-const listMessages = (title: string, msgs: string[], max = 30) =>
-  title +
-  "\n\n" +
-  msgs.slice(0, max).join("\n") +
-  (msgs.length > max ? `\n…ほか ${msgs.length - max} 件` : "");
+// CSV 取込のダイアログ状態（エラー/注意の一覧、または更新前の確認）。
+type CsvDialogState =
+  | { kind: "messages"; title: string; lead: string; messages: string[] }
+  | { kind: "merge"; fileName: string; imported: CsvImportResult; plan: CsvMergePlan };
 
 // データ入出力メニュー（ツールバー整理・§1.3）: JSON/MSPDI/CSV の出力・取込を1つのドロップダウンに集約。
 function DataMenu({
@@ -35,6 +37,7 @@ function DataMenu({
   onCsvTemplate,
   onCsvExport,
   onCsvImport,
+  onCsvUpdate,
 }: {
   onJsonExport: () => void;
   onJsonImport: () => void;
@@ -43,6 +46,8 @@ function DataMenu({
   onCsvTemplate: () => void;
   onCsvExport: () => void;
   onCsvImport: () => void;
+  // 閲覧のみ（viewer）では渡さない＝メニューに出さない。
+  onCsvUpdate?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -95,7 +100,8 @@ function DataMenu({
           <div className="menu-sep" />
           {item("CSVテンプレートを書き出す", onCsvTemplate)}
           {item("CSV（Excel）を書き出す", onCsvExport)}
-          {item("CSV（Excel）を読み込む…", onCsvImport)}
+          {item("CSV（Excel）から新規プロジェクトを作成…", onCsvImport)}
+          {onCsvUpdate ? item("CSV（Excel）で現在のプロジェクトを更新…", onCsvUpdate) : null}
         </div>
       ) : null}
     </div>
@@ -216,6 +222,19 @@ export function Header({
   onMembers?: () => void;
 }) {
   const saveStatus = useApp((s) => s.saveStatus);
+  const saveLabel = API_MODE
+    ? saveStatus === "saved"
+      ? "保存済み"
+      : saveStatus === "error"
+        ? "保存できません（再試行中）"
+        : saveStatus === "conflict"
+          ? "競合を確認してください"
+          : "保存中…"
+    : saveStatus === "saved"
+      ? "このブラウザに保存済み"
+      : saveStatus === "error"
+        ? "保存できませんでした"
+        : "保存中…";
   const readOnly = useApp(selectReadOnly);
   const account = useApp((s) => s.account);
   // Undo/Redo 可否は zundo の temporal ストアから購読（§2.3）。
@@ -224,8 +243,10 @@ export function Header({
   const fileRef = useRef<HTMLInputElement>(null);
   const mspdiRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
+  const csvUpdateRef = useRef<HTMLInputElement>(null);
+  const [csvDialog, setCsvDialog] = useState<CsvDialogState | null>(null);
 
-  // ---- CSV（Excel）連携: 標準テンプレート列。取込は常に新規プロジェクト ----
+  // ---- CSV（Excel）連携: 標準テンプレート列。新規プロジェクト作成と、現在のプロジェクトの更新（ID照合）----
   const doCsvTemplate = () => downloadCsv(csvTemplate(), "タスク取込テンプレート.csv");
   const doExportCsv = () => {
     const doc = useApp.getState().toDoc();
@@ -242,7 +263,12 @@ export function Header({
         const r = fromCsv(decodeCsvBytes(reader.result as ArrayBuffer));
         if (r.errors.length) {
           app().showToast(`CSVに ${r.errors.length} 件のエラーがあるため取り込みを中止しました`, true);
-          alert(listMessages("CSVを修正してから再度読み込んでください。", r.errors));
+          setCsvDialog({
+            kind: "messages",
+            title: "CSVのエラー",
+            lead: "CSVを修正してから再度読み込んでください。",
+            messages: r.errors,
+          });
           return;
         }
         const base = { ...emptyDoc(), tasks: r.tasks, dependencies: r.dependencies };
@@ -261,13 +287,82 @@ export function Header({
           `CSVを取り込みました（${doc.tasks.length}タスク・${doc.dependencies.length}依存）` +
             (r.warnings.length ? `／注意 ${r.warnings.length} 件` : ""),
         );
-        if (r.warnings.length) alert(listMessages("取り込みました。以下を確認してください。", r.warnings));
+        if (r.warnings.length)
+          setCsvDialog({
+            kind: "messages",
+            title: "CSV取込の注意",
+            lead: "取り込みました。以下を確認してください。",
+            messages: r.warnings,
+          });
       } catch {
         app().showToast("CSV解析に失敗しました", true);
       }
     };
     reader.onerror = () => useApp.getState().showToast("ファイルを読み込めませんでした", true);
     reader.readAsArrayBuffer(file);
+  };
+  // 現在のプロジェクトを CSV で更新: ID で照合し、確認ダイアログを経て1回の「戻す」単位で反映する。
+  const doUpdateCsv = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const app = useApp.getState();
+      try {
+        const r = fromCsv(decodeCsvBytes(reader.result as ArrayBuffer), app.me);
+        if (r.errors.length) {
+          app.showToast(`CSVに ${r.errors.length} 件のエラーがあるため更新を中止しました`, true);
+          setCsvDialog({
+            kind: "messages",
+            title: "CSVのエラー",
+            lead: "CSVを修正してから再度読み込んでください。現在のプロジェクトは変更していません。",
+            messages: r.errors,
+          });
+          return;
+        }
+        const plan = planCsvMerge({ tasks: app.tasks, dependencies: app.dependencies }, r);
+        const s = plan.summary;
+        if (!s.added && !s.updated && !s.removed && !s.depsAdded && !s.depsRemoved && !s.depsUpdated) {
+          app.showToast("CSVの内容は現在のプロジェクトと同じです（変更はありません）");
+          return;
+        }
+        setCsvDialog({ kind: "merge", fileName: file.name, imported: r, plan });
+      } catch {
+        app.showToast("CSV解析に失敗しました", true);
+      }
+    };
+    reader.onerror = () => useApp.getState().showToast("ファイルを読み込めませんでした", true);
+    reader.readAsArrayBuffer(file);
+  };
+  const applyCsvUpdate = (imported: CsvImportResult) => {
+    setCsvDialog(null);
+    const app = useApp.getState();
+    if (selectReadOnly(app)) {
+      app.showToast("閲覧のみのため更新できません", true);
+      return;
+    }
+    // 確認中に編集・同期が入っていてもよいよう、最新の状態に対して計画し直す。
+    const plan = planCsvMerge({ tasks: app.tasks, dependencies: app.dependencies }, imported);
+    const v = validateDoc({ ...app.toDoc(), tasks: plan.tasks, dependencies: plan.dependencies });
+    if (!v.ok) {
+      app.showToast("取込検証エラー: " + v.errors.slice(0, 2).join(" / "), true);
+      return;
+    }
+    app.applyCsvMerge(plan);
+    const s = plan.summary;
+    // 全体整列は既存ノードも動かすため、タスクを追加したときだけ行う。
+    if (s.added > 0) useApp.getState().layoutAll();
+    useApp
+      .getState()
+      .showToast(
+        `CSVで更新しました（追加 ${s.added}・更新 ${s.updated}・削除 ${s.removed}／依存 追加 ${s.depsAdded}・削除 ${s.depsRemoved}）` +
+          (imported.warnings.length ? `／注意 ${imported.warnings.length} 件` : ""),
+      );
+    if (imported.warnings.length)
+      setCsvDialog({
+        kind: "messages",
+        title: "CSV取込の注意",
+        lead: "更新しました。以下を確認してください。",
+        messages: imported.warnings,
+      });
   };
 
   // ---- MSPDI（MS Project XML）連携（§8 / Phase5 下ごしらえ）----
@@ -377,18 +472,24 @@ export function Header({
       </span>
       <ProjectBar />
       <button
-        className="btn"
+        className="btn header-undo"
         disabled={!canUndo || readOnly}
         onClick={() => useApp.getState().undo()}
+        title={`元に戻す（${modKey("Z")}）`}
+        aria-label="元に戻す"
       >
-        ↶ 戻す
+        <span aria-hidden="true">↶</span>
+        <span className="header-undo-label">戻す</span>
       </button>
       <button
-        className="btn"
+        className="btn header-undo"
         disabled={!canRedo || readOnly}
         onClick={() => useApp.getState().redo()}
+        title={`やり直す（${modShiftKey("Z")}）`}
+        aria-label="やり直す（進む）"
       >
-        進む ↷
+        <span className="header-undo-label">進む</span>
+        <span aria-hidden="true">↷</span>
       </button>
       {API_MODE && readOnly ? (
         <span className="role-badge" data-testid="readonly-badge" title="このプロジェクトは閲覧のみ可能です">
@@ -431,6 +532,7 @@ export function Header({
         onCsvTemplate={doCsvTemplate}
         onCsvExport={doExportCsv}
         onCsvImport={() => csvRef.current?.click()}
+        onCsvUpdate={readOnly ? undefined : () => csvUpdateRef.current?.click()}
       />
       <input
         ref={csvRef}
@@ -443,6 +545,35 @@ export function Header({
           e.target.value = "";
         }}
       />
+      <input
+        ref={csvUpdateRef}
+        type="file"
+        accept=".csv,text/csv"
+        style={{ display: "none" }}
+        data-testid="csv-update-file"
+        onChange={(e) => {
+          if (e.target.files?.[0]) doUpdateCsv(e.target.files[0]);
+          e.target.value = "";
+        }}
+      />
+      {csvDialog?.kind === "messages" ? (
+        <MessageListDialog
+          title={csvDialog.title}
+          lead={csvDialog.lead}
+          messages={csvDialog.messages}
+          testId="csv-messages"
+          onClose={() => setCsvDialog(null)}
+        />
+      ) : csvDialog?.kind === "merge" ? (
+        <CsvMergeDialog
+          fileName={csvDialog.fileName}
+          plan={csvDialog.plan}
+          hasIds={csvDialog.imported.hasIds}
+          warningCount={csvDialog.imported.warnings.length}
+          onApply={() => applyCsvUpdate(csvDialog.imported)}
+          onClose={() => setCsvDialog(null)}
+        />
+      ) : null}
       <input
         ref={fileRef}
         type="file"
@@ -464,20 +595,19 @@ export function Header({
           e.target.value = "";
         }}
       />
-      <span className={"savebadge " + saveStatus} data-testid="savebadge">
-        {API_MODE
-          ? saveStatus === "saved"
-            ? "保存済み"
-            : saveStatus === "error"
-              ? "保存できません（再試行中）"
-              : saveStatus === "conflict"
-                ? "競合を確認してください"
-                : "保存中…"
-          : saveStatus === "saved"
-            ? "このブラウザに保存済み"
-            : saveStatus === "error"
-              ? "保存できませんでした"
-              : "保存中…"}
+      {/* 保存状態は常に表示。狭い幅ではドットのみ（文言は title と視覚的に隠したテキストで保持） */}
+      <span
+        className={"savebadge " + saveStatus}
+        data-testid="savebadge"
+        title={saveLabel}
+      >
+        <span className="savebadge-dot" aria-hidden="true" />
+        <span className="savebadge-text">{saveLabel}</span>
+        {saveStatus === "error" || saveStatus === "conflict" ? (
+          <span className="savebadge-short" aria-hidden="true">
+            {saveStatus === "error" ? "保存エラー" : "競合"}
+          </span>
+        ) : null}
       </span>
     </header>
   );
