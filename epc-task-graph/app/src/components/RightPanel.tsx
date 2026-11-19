@@ -9,12 +9,60 @@ import {
   DISC_LABEL,
   MAX_DAYS,
   STATUS_LABEL,
+  finishVariance,
+  isValidIsoDate,
   type Dependency,
   type Task,
 } from "../domain";
 import { shortDate } from "../domain/insights";
 import { Icon } from "./workspace/Icon";
 import { Dialog } from "./workspace/Dialog";
+import { dateRange, varianceClass, varianceLabel } from "./scheduleFormat";
+
+// 実績日の入力（空にするとクリア）。入力途中（badInput）は確定しない。
+function ActualDateField({
+  label,
+  testId,
+  value,
+  onCommit,
+}: {
+  label: string;
+  testId: string;
+  value: string | null | undefined;
+  onCommit: (v: string | null) => void;
+}) {
+  return (
+    <label className="form-field">
+      {label}
+      <span className="date-input-row">
+        <input
+          data-testid={testId}
+          type="date"
+          value={value || ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "") {
+              if (!e.target.validity.badInput && value) onCommit(null);
+              return;
+            }
+            if (isValidIsoDate(v) && v !== value) onCommit(v);
+          }}
+        />
+        {value ? (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={label + "をクリア"}
+            title="クリア"
+            onClick={() => onCommit(null)}
+          >
+            <Icon name="close" size={14} />
+          </button>
+        ) : null}
+      </span>
+    </label>
+  );
+}
 
 function DepAdder({
   label,
@@ -192,9 +240,9 @@ function DurationEditor({ task }: { task: Task }) {
             <strong>プロジェクト完了日への影響</strong>
           </div>
           <p>
-            {shortDate(current.projectEndDate)}
+            {shortDate(current.projectFinishDate)}
             <Icon name="arrow" size={14} />
-            <b>{shortDate(forecast.projectEndDate)}</b>
+            <b>{shortDate(forecast.projectFinishDate)}</b>
             <span>
               {delta > 0
                 ? `+${delta}日`
@@ -244,7 +292,12 @@ export function RightPanel() {
     preds = deps.filter((d) => d.successorId === task.id),
     succs = deps.filter((d) => d.predecessorId === task.id),
     byId = selectTaskIndex(tasks),
-    schedule = cpm.byTask.get(task.id);
+    schedule = cpm.byTask.get(task.id),
+    variance = finishVariance(task, schedule),
+    actualOrderBad =
+      !!task.actualStart &&
+      !!task.actualFinish &&
+      task.actualFinish < task.actualStart;
   const depItem = (d: Dependency, otherId: string) => (
     <div className="relation-item" key={d.id}>
       <button
@@ -509,14 +562,49 @@ export function RightPanel() {
           <>
             <div className="schedule-cards">
               <div data-testid="cpm-es" data-offset={schedule?.es}>
-                <span>開始予定</span>
+                <span>
+                  {schedule && schedule.state !== "planned"
+                    ? "開始（実績）"
+                    : "開始予定"}
+                </span>
                 <b>{schedule?.esDate || "—"}</b>
               </div>
               <div data-testid="cpm-ef" data-offset={schedule?.ef}>
-                <span>終了予定</span>
-                <b>{schedule?.efDate || "—"}</b>
+                <span>
+                  {schedule?.state === "done" ? "完了（実績）" : "終了予定"}
+                </span>
+                <b>{schedule?.finishDate || "—"}</b>
               </div>
             </div>
+            {schedule?.state === "started" && (
+              <p className="schedule-note" data-testid="schedule-note">
+                着手済み: 残 {schedule.remainingDays} 日を基準日から再計算
+              </p>
+            )}
+            {schedule?.state === "done" && (
+              <p className="schedule-note done" data-testid="schedule-note">
+                完了: 実績日で固定
+              </p>
+            )}
+            <dl className="schedule-detail schedule-progress">
+              <dt>残日数</dt>
+              <dd data-testid="remaining-days">
+                {schedule ? `${schedule.remainingDays}日` : "—"}
+              </dd>
+              <dt>ベースライン</dt>
+              <dd>
+                {task.baselineStart || task.baselineFinish
+                  ? dateRange(task.baselineStart, task.baselineFinish)
+                  : "未保存"}
+              </dd>
+              <dt>差異</dt>
+              <dd
+                className={varianceClass(variance)}
+                data-testid="baseline-variance"
+              >
+                {variance == null ? "—" : varianceLabel(variance)}
+              </dd>
+            </dl>
             <div
               className={
                 "float-card " + (schedule?.isCritical ? "critical" : "")
@@ -528,11 +616,39 @@ export function RightPanel() {
                 <small>日</small>
               </b>
               <p>
-                {schedule?.isCritical
-                  ? "この工程の延長は、プロジェクト完了日に影響する可能性があります。"
-                  : "この工程の開始を遅らせられる暦日数です。"}
+                {schedule?.state === "done"
+                  ? "完了済みのため、工程計算では実績日で固定されます。"
+                  : schedule?.isCritical
+                    ? "この工程の延長は、プロジェクト完了日に影響する可能性があります。"
+                    : "この工程の開始を遅らせられる暦日数です。"}
               </p>
             </div>
+            <ActualDateField
+              label="実績開始日"
+              testId="actual-start"
+              value={task.actualStart}
+              onCommit={(v) => upd({ actualStart: v })}
+            />
+            <ActualDateField
+              label="実績完了日"
+              testId="actual-finish"
+              value={task.actualFinish}
+              onCommit={(v) => upd({ actualFinish: v })}
+            />
+            {actualOrderBad && (
+              <p className="form-error">
+                実績完了日が実績開始日より前になっています。
+              </p>
+            )}
+            {task.status === "NOT_STARTED" &&
+              (task.actualStart || task.actualFinish) && (
+                <p className="inspector-help">
+                  未着手のため実績日は工程計算に使われません。ステータスを「進行中」または「完了」にすると反映されます。
+                </p>
+              )}
+            <p className="inspector-help">
+              ステータスを変えると実績日が自動で記録されます（進行中＝実績開始、完了＝実績完了）。
+            </p>
             <DurationEditor
               key={`${task.id}-${task.durationDays}`}
               task={task}
@@ -574,10 +690,10 @@ export function RightPanel() {
                 <dt>最遅開始</dt>
                 <dd>{schedule?.lsDate || "—"}</dd>
                 <dt>最遅終了</dt>
-                <dd>{schedule?.lfDate || "—"}</dd>
+                <dd>{schedule?.lateFinishDate || "—"}</dd>
               </dl>
               <p className="inspector-help">
-                稼働曜日・祝日はプロジェクト設定で変更できます。開始・終了は依存関係と所要日数から計算します。
+                稼働曜日・祝日はプロジェクト設定で変更できます。開始・終了は依存関係と所要日数から計算します。着手済みのタスクは残作業を基準日（進捗の締め日）以降に、完了したタスクは実績日に置きます。
               </p>
             </details>
           </>

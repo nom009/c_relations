@@ -181,6 +181,22 @@ describe("Persistence across product workflows", () => {
     });
     expect(useApp.getState().project.id).toBe(target.project.id);
   });
+  it("WBS 名称: 前後空白を除いて保存し、変化なしは無視、一括変更は 1 回の Undo で戻る", async () => {
+    const s = () => useApp.getState();
+    s().setWbsName(" 1.2 ", "  配管設計  ");
+    expect(s().project.wbsNames).toEqual({ "1.2": "配管設計" });
+    await flushPersistence();
+    expect(mocks.patch.mock.lastCall![0].project.wbsNames).toEqual({ "1.2": "配管設計" });
+    s().setWbsName("1.2", "配管設計");
+    expect(s().saveStatus).toBe("saved");
+    // 空の名称は削除、長すぎるコードは付けない
+    s().setWbsNames({ "1": "設計", "1.2": " ", ["x".repeat(101)]: "長い" });
+    expect(s().project.wbsNames).toEqual({ "1": "設計" });
+    s().undo();
+    expect(s().project.wbsNames).toEqual({ "1.2": "配管設計" });
+    s().redo();
+    expect(s().project.wbsNames).toEqual({ "1": "設計" });
+  });
   it("keeps the current document when its save fails during a project switch", async () => {
     const current = useApp.getState().project.id;
     mocks.patch.mockRejectedValueOnce(new Error("quota"));
@@ -206,6 +222,39 @@ describe("Persistence across product workflows", () => {
     useApp.getState().loadDoc(doc, { persist: false });
     useApp.getState().bulkUpdateTasks([t.id], { status: "DONE" });
     expect(useApp.getState().tasks[0].progress).toBe(100);
+  });
+  it("records actual dates on status changes unless the patch sets them", () => {
+    const a = makeTask({ name: "a", durationDays: 3 }),
+      b = makeTask({ name: "b", durationDays: 3 }),
+      doc = emptyDoc();
+    doc.tasks = [a, b];
+    doc.project.dataDate = "2025-06-02"; // 過去の月曜（today より前なので ES がそのまま実績開始になる）
+    useApp.getState().loadDoc(doc, { persist: false });
+    const get = (id: string) => useApp.getState().tasks.find((x) => x.id === id)!;
+    useApp.getState().updateTask(a.id, { status: "IN_PROGRESS" });
+    expect(get(a.id).actualStart).toBe("2025-06-02");
+    useApp.getState().updateTask(a.id, { status: "DONE" });
+    expect(get(a.id).actualFinish).toBe("2025-06-04");
+    useApp.getState().updateTask(a.id, { status: "NOT_STARTED" });
+    expect(get(a.id).actualStart).toBeNull();
+    expect(get(a.id).actualFinish).toBeNull();
+    useApp.getState().bulkUpdateTasks([b.id], { status: "IN_PROGRESS", actualStart: "2025-05-30" });
+    expect(get(b.id).actualStart).toBe("2025-05-30");
+  });
+  it("saves the current plan as the baseline and clears it", () => {
+    const a = makeTask({ name: "a", durationDays: 3 }),
+      doc = emptyDoc();
+    doc.tasks = [a];
+    doc.project.dataDate = "2025-06-02";
+    useApp.getState().loadDoc(doc, { persist: false });
+    useApp.getState().setBaseline();
+    expect(useApp.getState().tasks[0]).toMatchObject({
+      baselineStart: "2025-06-02",
+      baselineFinish: "2025-06-04",
+    });
+    expect(useApp.getState().dirty.tasks.has(a.id)).toBe(true);
+    useApp.getState().clearBaseline();
+    expect(useApp.getState().tasks[0]).toMatchObject({ baselineStart: null, baselineFinish: null });
   });
   it("does not create dependencies to deleted tasks and clears a stale connect source", () => {
     const a = makeTask({ name: "a" }),

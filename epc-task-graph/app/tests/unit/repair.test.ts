@@ -51,6 +51,18 @@ describe('repairDoc', () => {
     expect(validateDoc(r.doc).ok).toBe(true);
   });
 
+  it('実績/ベースライン日の null は保持し（再修復しない）、不正な日付は null に戻す', () => {
+    const ok = makeTask({ name: 'a', actualStart: null, actualFinish: null, baselineStart: '2025-06-02', baselineFinish: null });
+    expect(repairDoc(docWith([ok])).repaired).toBe(false);
+    const bad = makeTask({ name: 'b' }) as unknown as Loose;
+    bad.actualStart = '2025-02-30';
+    bad.baselineFinish = 42;
+    const r = repairDoc(docWith([bad]));
+    expect(r.repaired).toBe(true);
+    expect((r.doc as GraphDoc).tasks[0]).toMatchObject({ actualStart: null, baselineFinish: null });
+    expect(validateDoc(r.doc).ok).toBe(true);
+  });
+
   it('構造的な問題（循環）は修復後も検証で失敗する', () => {
     const a = makeTask({ name: 'a' });
     const b = makeTask({ name: 'b' });

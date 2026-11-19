@@ -45,6 +45,32 @@ export function wbsPath(code: string): string[] {
   return out;
 }
 
+// ---- WBS 名称（ProjectMeta.wbsNames: コード → 表示名）----
+export const WBS_NAME_MAX = 200;
+// サーバー検証（api validation.ts）と同じ上限。超えるコードには名称を付けない。
+export const WBS_CODE_MAX = 100;
+export const WBS_NAMES_MAX = 2000;
+
+// 名称を安全に取り出す（プロトタイプのキーを拾わない）。無ければ ''。
+export function wbsNameOf(code: string, names?: Record<string, string>): string {
+  if (!names || !Object.prototype.hasOwnProperty.call(names, code)) return '';
+  const v = names[code];
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+// 表示ラベル: 名称があれば "1.2 配管設計"、無ければ "1.2"。
+export function wbsLabel(code: string, names?: Record<string, string>): string {
+  const name = wbsNameOf(code, names);
+  return name ? `${code} ${name}` : code;
+}
+
+// 各コードと祖先（"1.2.3" → "1","1.2","1.2.3"）を重複なく自然順で返す。空コードは除く。
+export function wbsCodesWithAncestors(codes: readonly string[]): string[] {
+  const set = new Set<string>();
+  for (const c of codes) for (const p of wbsPath(c)) set.add(p);
+  return [...set].sort(naturalWbsCompare);
+}
+
 // WBSコードの自然順比較（§12.3.1 段5）。セグメントごとに数値比較（"1.10" は "1.9" の後）。
 // 数値化できないセグメントは文字列比較にフォールバック。長さが短い方（＝上位/直属）が先。
 export function naturalWbsCompare(a: string, b: string): number {

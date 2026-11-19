@@ -174,6 +174,19 @@ function HelpButton() {
               ／ <kbd>{MOD_LABEL}</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> やり直し
             </li>
           </ul>
+          <div className="help-sec">進捗と基準日</div>
+          <ul>
+            <li>
+              <b>基準日</b> … 進捗の締め日。完了タスクは実績日で固定、着手済みは残作業を基準日から再計算
+            </li>
+            <li>
+              <b>ステータス変更</b> … 進行中で実績開始日、完了で実績完了日を自動記録（右パネルで修正可）
+            </li>
+            <li>
+              <b>ベースライン</b> … 「操作 ▾」で現在の計画を保存すると、差異（遅れ／前倒し）を表示
+            </li>
+            <li>基準日が1週間を超えて前のままだと、概要に更新を促す警告が出ます</li>
+          </ul>
           <div className="help-sec">データ</div>
           <ul>
             <li>

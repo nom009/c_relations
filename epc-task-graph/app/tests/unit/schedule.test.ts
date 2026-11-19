@@ -16,7 +16,7 @@ import { computeCpm } from '../../src/domain/cpm';
 import { makeTask } from '../../src/domain/factory';
 import type { Task } from '../../src/domain/types';
 
-// makeTask は実績・ベースラインを引き継がないため、後から展開して付与する。
+// 実績・ベースラインは makeTask でも渡せるが、明示のため後から展開して付与する。
 function task(p: Partial<Task> = {}): Task {
   return { ...makeTask({ id: 'A', name: 'A', ...p }), ...p };
 }

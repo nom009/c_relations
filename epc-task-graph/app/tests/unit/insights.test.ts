@@ -103,7 +103,7 @@ describe("Consistent task editing", () => {
   });
 });
 describe("Progress against the status date (P6)", () => {
-  // makeTask は実績・ベースラインを引き継がないため、後から展開して付与する。
+  // 実績・ベースラインは makeTask でも渡せるが、明示のため後から展開して付与する。
   const DATA_DATE = "2026-09-01";
   it("lists overdue work only when today is given, ordered by finish date", () => {
     const long = makeTask({ name: "long", durationDays: 10 });

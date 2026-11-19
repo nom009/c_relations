@@ -4,6 +4,8 @@
 // ============================================================================
 import { memo, useEffect, useRef, useState } from 'react';
 import {
+  finishVariance,
+  isValidIsoDate,
   wbsPath,
   type CpmTaskResult,
   type Discipline,
@@ -15,6 +17,7 @@ import {
 import { DISCIPLINES, STATUSES } from '../../domain';
 import { useApp } from '../../store/store';
 import { selectTaskIndex } from '../../store/selectors';
+import { signedDays, varianceClass } from '../scheduleFormat';
 import {
   COLUMN_META,
   DiscChip,
@@ -44,7 +47,11 @@ interface Props {
   handlers: RowHandlers;
 }
 
-function cpmDate(cpm: CpmTaskResult | null, key: 'esDate' | 'efDate' | 'lsDate' | 'lfDate'): string {
+// 終了系は「その日を含む」終了日を表示する（efDate/lfDate は排他的終端のため使わない）。
+function cpmDate(
+  cpm: CpmTaskResult | null,
+  key: 'esDate' | 'finishDate' | 'lsDate' | 'lateFinishDate',
+): string {
   return cpm ? cpm[key] : '—';
 }
 
@@ -101,8 +108,69 @@ function EditInput({
       </select>
     );
   }
+  if (col === 'actualStart' || col === 'actualFinish') {
+    return <DateEdit col={col} task={task} onCommit={onCommit} onCancel={onCancel} />;
+  }
   return (
     <TextEdit col={col} task={task} assigneeOptions={assigneeOptions} onCommit={onCommit} onCancel={onCancel} />
+  );
+}
+
+// 実績日（YYYY-MM-DD）。空欄で確定すると実績を取り消す。不正な日付は確定しない。
+function DateEdit({
+  col,
+  task,
+  onCommit,
+  onCancel,
+}: {
+  col: 'actualStart' | 'actualFinish';
+  task: Task;
+  onCommit: (patch: Partial<Task>, advance: boolean) => void;
+  onCancel: () => void;
+}) {
+  const initial = task[col] || '';
+  const done = useRef(false);
+  const draft = useRef(initial);
+  const commit = (raw: string, advance: boolean, bad = false) => {
+    if (done.current) return;
+    done.current = true;
+    const v = raw.trim();
+    // 入力途中（badInput）は空文字になるため、取消と区別して確定しない。
+    if (bad || v === initial || (v && !isValidIsoDate(v))) return onCancel();
+    onCommit(col === 'actualStart' ? { actualStart: v || null } : { actualFinish: v || null }, advance);
+  };
+  const latest = useRef({ commit, initial });
+  latest.current = { commit, initial };
+  useEffect(
+    () => () => {
+      const l = latest.current;
+      if (draft.current !== l.initial) l.commit(draft.current, false);
+    },
+    [],
+  );
+  return (
+    <input
+      className="tedit"
+      autoFocus
+      type="date"
+      aria-label={col === 'actualStart' ? '実績開始日' : '実績完了日'}
+      defaultValue={initial}
+      onChange={(e) => {
+        draft.current = e.target.validity.badInput ? initial : e.target.value;
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const el = e.target as HTMLInputElement;
+          commit(el.value, true, el.validity.badInput);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          done.current = true;
+          onCancel();
+        }
+      }}
+      onBlur={(e) => commit(e.target.value, false, e.target.validity.badInput)}
+    />
   );
 }
 
@@ -386,13 +454,13 @@ function TableRowViewImpl({
           content = <span className="mono">{cpmDate(cpm, 'esDate')}</span>;
           break;
         case 'ef':
-          content = <span className="mono">{cpmDate(cpm, 'efDate')}</span>;
+          content = <span className="mono">{cpmDate(cpm, 'finishDate')}</span>;
           break;
         case 'ls':
           content = <span className="mono">{cpmDate(cpm, 'lsDate')}</span>;
           break;
         case 'lf':
-          content = <span className="mono">{cpmDate(cpm, 'lfDate')}</span>;
+          content = <span className="mono">{cpmDate(cpm, 'lateFinishDate')}</span>;
           break;
         case 'totalFloat':
           content = cpm ? (
@@ -406,6 +474,26 @@ function TableRowViewImpl({
         case 'critical':
           content = cpm && cpm.isCritical ? <span className="cp-mark" title="クリティカル">◆</span> : null;
           break;
+        case 'actualStart':
+        case 'actualFinish': {
+          const d = task[col];
+          content = d ? <span className="mono">{d}</span> : <span className="muted">—</span>;
+          break;
+        }
+        case 'variance': {
+          // ベースライン終了日との差（暦日）。ベースライン無しは空欄。
+          const v = finishVariance(task, cpm ?? undefined);
+          content =
+            v == null ? null : (
+              <span
+                className={('mono ' + varianceClass(v)).trim()}
+                title={`ベースライン終了 ${task.baselineFinish} → 予定終了 ${cpm?.finishDate ?? '—'}`}
+              >
+                {signedDays(v)}
+              </span>
+            );
+          break;
+        }
         case 'deps':
           content = <DepsCell row={row} onJump={handlers.onJump} />;
           break;

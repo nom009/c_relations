@@ -239,6 +239,52 @@ export function defineApiScenarios(makeStore: () => ServerStore): void {
       expect(list[0]).toMatchObject({ name: 'Renamed', taskCount: 3, role: 'owner' });
     });
 
+    it('project.wbsNames は patch / PUT graph で保存・取得でき、{} で全削除できる', async () => {
+      const { api, alice } = setup();
+      const s = await seedProject(api, alice);
+      const graph = async () => ((await api(alice, 'GET', `/projects/${s.pid}/graph`)).body as GraphResponse).doc;
+      expect((await graph()).project.wbsNames).toEqual({}); // 未設定は {} で返る
+
+      const names = { '1': '設計', '1.2': '配管設計' };
+      const res = await api(alice, 'POST', `/projects/${s.pid}/patch`, { ...emptyPatch(s.pid), project: { wbsNames: names } });
+      expect(res.status).toBe(200);
+      expect((await graph()).project.wbsNames).toEqual(names);
+      const ch = (await api(alice, 'GET', `/projects/${s.pid}/changes?since=1`)).body as ChangesResponse;
+      expect(ch.project?.wbsNames).toEqual(names);
+
+      // 他の項目だけの patch では消えない
+      await api(alice, 'POST', `/projects/${s.pid}/patch`, { ...emptyPatch(s.pid), project: { name: 'R' } });
+      expect((await graph()).project).toMatchObject({ name: 'R', wbsNames: names });
+
+      await api(alice, 'POST', `/projects/${s.pid}/patch`, { ...emptyPatch(s.pid), project: { wbsNames: {} } });
+      expect((await graph()).project.wbsNames).toEqual({});
+
+      const put = { ...s.doc, project: { ...s.doc.project, wbsNames: { '2': '調達' } } };
+      expect((await api(alice, 'PUT', `/projects/${s.pid}/graph`, put)).status).toBe(200);
+      expect((await graph()).project.wbsNames).toEqual({ '2': '調達' });
+    });
+
+    it('project.wbsNames の不正（201 字・2001 件・101 字のコード・文字列以外）は 422', async () => {
+      const { api, alice } = setup();
+      const s = await seedProject(api, alice);
+      const many: Record<string, string> = {};
+      for (let i = 0; i < 2001; i++) many[String(i + 1)] = 'x';
+      const bad: unknown[] = [{ '1': 'x'.repeat(201) }, many, { ['1.'.repeat(50) + '1']: 'x' }, { '1': 1 }];
+      for (const wbsNames of bad) {
+        const res = await api(alice, 'POST', `/projects/${s.pid}/patch`, { ...emptyPatch(s.pid), project: { wbsNames } });
+        expect(res.status).toBe(422);
+        const put = await api(alice, 'PUT', `/projects/${s.pid}/graph`, { ...s.doc, project: { ...s.doc.project, wbsNames } });
+        expect(put.status).toBe(422);
+      }
+      // 上限ちょうどは通る
+      const ok = { '1': 'x'.repeat(200), ['1.'.repeat(49) + '12']: 'y' };
+      const res = await api(alice, 'POST', `/projects/${s.pid}/patch`, { ...emptyPatch(s.pid), project: { wbsNames: ok } });
+      expect(res.status).toBe(200);
+      const g = (await api(alice, 'GET', `/projects/${s.pid}/graph`)).body as GraphResponse;
+      expect(g.doc.project.wbsNames).toEqual(ok);
+      expect(g.doc.project.version).toBe(2);
+    });
+
     it('並行編集で循環になる patch は 422 で何も適用されない', async () => {
       const { api, alice, bob } = setup();
       const s = await seedProject(api, alice);

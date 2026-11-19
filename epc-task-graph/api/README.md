@@ -17,6 +17,8 @@
   - 適用後の全体を DAG・参照整合で検証し、不正なら 422 でロールバック。
 - 書き込みはプロジェクト単位で直列化（SQL: `UPDLOCK, ROWLOCK`）。`viewState` はユーザー個人ごとに保存し、共有 `version` を進めない。
 - スナップショット: PUT / restore / duplicate で作成、patch は前回から 5 分以上空いたときに `autosave`。剪定は共有の純関数 `selectSnapshotsToKeep`（`../app/src/domain/snapshotRetention.ts`）。
+- `project.wbsNames`（WBS コード → 名称）は `dbo.projects.wbsNames`（NVARCHAR(MAX) の JSON、空は NULL）に保存し、応答では常に `{}` 以上を返す。名称 200 字・最大 2000 件・コード 1〜100 字を超えると 422。
+- スキーマ変更は冪等な DDL（`src/store/schema.ts`）で起動時に毎回適用する。既存 DB への列追加も `IF COL_LENGTH(...) IS NULL ALTER TABLE ... ADD` で自動移行（手作業不要）。
 - `GET /api/health` は認証不要（`{"ok":true}`）。
 
 ## 環境変数

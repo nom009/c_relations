@@ -29,6 +29,7 @@ const toMeta = (r: ProjectRecord): ProjectMeta => ({
   description: r.description,
   calendarId: r.calendarId,
   dataDate: r.dataDate,
+  wbsNames: r.wbsNames ?? {}, // 常に返す（全削除もクライアントへ伝わるように）
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
   version: r.version,
@@ -106,6 +107,7 @@ async function writeFullDoc(
     description: doc.project.description,
     dataDate: doc.project.dataDate,
     calendarId: doc.project.calendarId,
+    wbsNames: doc.project.wbsNames ?? {},
     schemaVersion: doc.schemaVersion,
     version,
     metaVersion: version,

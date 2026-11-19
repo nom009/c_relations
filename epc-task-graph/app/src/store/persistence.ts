@@ -67,6 +67,7 @@ export function buildPatch(doc: GraphDoc, dirty: DirtySnapshot): GraphPatch {
       description: doc.project.description,
       dataDate: doc.project.dataDate,
       calendarId: doc.project.calendarId,
+      wbsNames: doc.project.wbsNames ?? {},
     },
     viewState: doc.viewState,
     savedViews: doc.savedViews,

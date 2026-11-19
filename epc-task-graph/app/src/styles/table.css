@@ -298,6 +298,15 @@
   color: #d97706;
   font-weight: 700;
 }
+/* ベースライン比の差異（正=遅れ・負=前倒し） */
+.var-late {
+  color: #dc2626;
+  font-weight: 700;
+}
+.var-early {
+  color: #15803d;
+  font-weight: 700;
+}
 .deps-cell {
   position: relative;
 }

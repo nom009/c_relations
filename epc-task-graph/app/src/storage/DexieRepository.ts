@@ -76,8 +76,11 @@ class EpcDexie extends Dexie {
 }
 
 function stripProjectRow(row: ProjectRow): ProjectMeta {
-  const { id, name, description, calendarId, dataDate, createdAt, updatedAt, version } = row;
-  return { id, name, description, calendarId, dataDate, createdAt, updatedAt, version };
+  const { id, name, description, calendarId, dataDate, createdAt, updatedAt, version, wbsNames } = row;
+  const meta: ProjectMeta = { id, name, description, calendarId, dataDate, createdAt, updatedAt, version };
+  // 空・未設定は持たない（旧データと同じ形を保つ）
+  if (wbsNames && Object.keys(wbsNames).length) meta.wbsNames = wbsNames;
+  return meta;
 }
 
 // 移行→修復→検証。不正なら CorruptDocError（doc は移行・修復済み・未検証）。

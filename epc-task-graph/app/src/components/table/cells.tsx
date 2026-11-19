@@ -35,6 +35,9 @@ export const COLUMN_META: Record<TableColumnKey, ColumnMeta> = {
   lf: { label: '最遅終了', width: 104, align: 'center', sortable: true, numeric: true },
   totalFloat: { label: '余裕日数', width: 90, align: 'right', sortable: true, numeric: true },
   critical: { label: 'CP', width: 44, align: 'center', sortable: true },
+  actualStart: { label: '実績開始', width: 112, align: 'center', sortable: true },
+  actualFinish: { label: '実績完了', width: 112, align: 'center', sortable: true },
+  variance: { label: '差異(日)', width: 80, align: 'right', sortable: true, numeric: true },
   deps: { label: '先行/後続', width: 96, align: 'center', sortable: false },
 };
 
@@ -46,6 +49,8 @@ export const EDITABLE_COLUMNS: TableColumnKey[] = [
   'status',
   'progress',
   'durationDays',
+  'actualStart',
+  'actualFinish',
 ];
 
 // チップは白文字が乗るため WCAG AA 安全版の工種色（DISC_COLOR_ON）を使う。

@@ -305,7 +305,7 @@ describe('CPM 性能（§10 PR4: 4,000シードで <20ms）', () => {
 });
 
 describe('CPM 進捗（P6 方式: 完了=実績で固定／着手済み=残所要を基準日以降）', () => {
-  // makeTask は実績・ベースラインを引き継がないため、後から展開して付与する。
+  // 実績・ベースラインは makeTask でも渡せるが、明示のため後から展開して付与する。
   function P(id: string, durationDays: number, p: Partial<Task> = {}): Task {
     return { ...makeTask({ id, name: id, durationDays, ...p }), ...p };
   }

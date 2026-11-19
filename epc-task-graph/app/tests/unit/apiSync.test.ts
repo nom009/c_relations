@@ -74,6 +74,25 @@ describe("buildApiPatch（サーバー版）", () => {
     expect(buildApiPatch(doc, dirtyOf(), sync).project).toBeUndefined();
   });
 
+  it("project.wbsNames の変更も送り、未設定と {} は同一視し、全削除は {} で送る", () => {
+    const { doc, sync } = syncedDoc();
+    doc.project = { ...doc.project, wbsNames: {} };
+    expect(buildApiPatch(doc, dirtyOf(), sync).project).toBeUndefined();
+
+    doc.project = { ...doc.project, wbsNames: { "2.1": "主要機器", "1.2": "配管設計" } };
+    const patch = buildApiPatch(doc, dirtyOf(), sync);
+    expect(patch.project?.wbsNames).toEqual({ "1.2": "配管設計", "2.1": "主要機器" });
+    commitPatch(sync, patch, {});
+    // キー順が違うだけなら再送しない
+    doc.project = { ...doc.project, wbsNames: { "1.2": "配管設計", "2.1": "主要機器" } };
+    expect(buildApiPatch(doc, dirtyOf(), sync).project).toBeUndefined();
+
+    const cleared = { ...doc.project };
+    delete cleared.wbsNames;
+    doc.project = cleared;
+    expect(buildApiPatch(doc, dirtyOf(), sync).project?.wbsNames).toEqual({});
+  });
+
   it("成功後は newRevs で rev を更新し、「自分の変更で上書き」は serverRev を baseRev にする", () => {
     const { doc, sync } = syncedDoc();
     const id = doc.tasks[0].id;

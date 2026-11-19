@@ -184,20 +184,24 @@ describe('deriveTableRows: WBS行の日付集計 min ES 〜 max EF（§12.3.2）
   const deps = [makeDep(A.id, B.id), makeDep(B.id, C.id)];
   const cpm = computeCpm([A, B, C], deps, '2026-01-01').byTask;
 
-  it('WBS "1" は配下の最早ES日付と最遅EF日付を集計する', () => {
+  it('WBS "1" は配下の最早ES日付と最遅の終了日（その日を含む）を集計する', () => {
     const { rows } = deriveTableRows([A, B, C], deps, spec(), NO_SORT, cpm);
     const w1 = rows.find((r) => r.id === 'wbs::1')!;
     expect(w1.kind).toBe('wbs');
-    // 最早ES=A、最遅EF=C（鎖の末尾）。
+    // 最早ES=A、最遅終了=C（鎖の末尾）。表示は排他的終端 efDate ではなく finishDate。
     expect(w1.esMin).toBe(cpm.get(A.id)!.esDate);
-    expect(w1.efMax).toBe(cpm.get(C.id)!.efDate);
+    expect(w1.efMax).toBe(cpm.get(C.id)!.finishDate);
+    expect(w1.efMax).not.toBe(cpm.get(C.id)!.efDate);
+    // ガントのバー位置用オフセット（EF は排他的終端のまま）。
+    expect(w1.esOff).toBe(cpm.get(A.id)!.es);
+    expect(w1.efOff).toBe(cpm.get(C.id)!.ef);
   });
 
   it('子WBS "1.2" は自身の配下だけ（B,C）で集計する', () => {
     const { rows } = deriveTableRows([A, B, C], deps, spec(), NO_SORT, cpm);
     const w12 = rows.find((r) => r.id === 'wbs::1.2')!;
     expect(w12.esMin).toBe(cpm.get(B.id)!.esDate); // B が 1.2 内で最早
-    expect(w12.efMax).toBe(cpm.get(C.id)!.efDate); // C が 1.2 内で最遅
+    expect(w12.efMax).toBe(cpm.get(C.id)!.finishDate); // C が 1.2 内で最遅
   });
 
   it('CPM未注入なら WBS 行の日付集計は null', () => {
@@ -205,6 +209,17 @@ describe('deriveTableRows: WBS行の日付集計 min ES 〜 max EF（§12.3.2）
     const w1 = rows.find((r) => r.id === 'wbs::1')!;
     expect(w1.esMin).toBeNull();
     expect(w1.efMax).toBeNull();
+    expect(w1.efOff).toBeNull();
+  });
+
+  it('差異(日)でソートでき、ベースライン無しは方向によらず末尾', () => {
+    const fin = (t: typeof A) => cpm.get(t.id)!.finishDate;
+    const late = { ...A, baselineFinish: '2025-12-30' }; // 実際より遅れ（正）
+    const early = { ...C, baselineFinish: '2026-02-28' }; // 前倒し（負）
+    const { rows } = deriveTableRows([late, B, early], deps, spec(), [{ key: 'variance', dir: 'desc' }], cpm);
+    expect(fin(A) > '2025-12-30').toBe(true);
+    const names = rows.filter((r) => r.kind === 'task').map((r) => r.task!.name);
+    expect(names).toEqual(['A', 'C', 'B']);
   });
 });
 

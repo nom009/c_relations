@@ -131,7 +131,7 @@ function ProjectBar() {
   );
 }
 
-// 操作メニュー（二次操作を集約・大胆に隠す）: プロジェクト管理・整列・デモ生成。
+// 操作メニュー（二次操作を集約・大胆に隠す）: プロジェクト管理・整列・ベースライン・デモ生成。
 function ActionsMenu({
   onNewProject,
   onSettings,
@@ -142,6 +142,7 @@ function ActionsMenu({
   onMembers?: () => void;
 }) {
   const role = useApp((s) => s.role);
+  const readOnly = useApp(selectReadOnly);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -189,6 +190,22 @@ function ActionsMenu({
             useApp.getState().runners.layoutVisible?.(),
           )}
           {item("全体整列（Worker）", () => useApp.getState().layoutAll())}
+          {!readOnly ? (
+            <>
+              <div className="menu-sep" />
+              {item("ベースラインを保存（現在の計画）", () =>
+                useApp.getState().setBaseline(),
+              )}
+              {item("ベースラインをクリア", () => {
+                if (
+                  confirm(
+                    "全タスクのベースラインをクリアしますか？（元に戻すで復元できます）",
+                  )
+                )
+                  useApp.getState().clearBaseline();
+              })}
+            </>
+          ) : null}
           <div className="menu-sep" />
           {item("新規プロジェクト", () => onNewProject?.())}
           {item("プロジェクト設定", () => onSettings?.())}

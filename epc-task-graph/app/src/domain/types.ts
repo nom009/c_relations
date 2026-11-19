@@ -232,6 +232,9 @@ export type TableColumnKey =
   | 'lf'
   | 'totalFloat'
   | 'critical'
+  | 'actualStart'
+  | 'actualFinish'
+  | 'variance'
   | 'deps';
 
 export type TableSortKey = Exclude<TableColumnKey, 'deps'>;
@@ -254,7 +257,9 @@ export interface TableRow {
   hasMilestone?: boolean;
   avgProgress?: number;
   esMin?: string | null; // WBS配下の最早ES日付（min ES・§12.3.2／ガントのサマリバー準備）
-  efMax?: string | null; // WBS配下の最遅EF日付（max EF）
+  efMax?: string | null; // WBS配下の最遅の終了日（その日を含む・表示用）
+  esOff?: number | null; // WBS配下の最早ES（日オフセット・ガントのバー位置用）
+  efOff?: number | null; // WBS配下の最遅EF（日オフセット・排他的終端）
   // kind:'task'
   task?: Task;
   dim?: boolean;

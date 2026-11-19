@@ -36,11 +36,15 @@ export function createSyncState(): SyncState {
 
 export const syncState: SyncState = createSyncState();
 
-type SharedMeta = Pick<ProjectMeta, 'name' | 'description' | 'dataDate' | 'calendarId'>;
+type SharedMeta = Pick<ProjectMeta, 'name' | 'description' | 'dataDate' | 'calendarId' | 'wbsNames'>;
 
 // サーバーと共有するプロジェクト項目（apiContract の共有範囲）。キー順を固定して JSON 比較する。
+// wbsNames は未設定と {} を同一視し、常に {} 以上で送る（全削除もサーバーへ伝わるように）。
 export function sharedMeta(p: SharedMeta): SharedMeta {
-  return { name: p.name, description: p.description, dataDate: p.dataDate, calendarId: p.calendarId };
+  const wbsNames: Record<string, string> = {};
+  const src = p.wbsNames ?? {};
+  for (const k of Object.keys(src).sort()) wbsNames[k] = src[k];
+  return { name: p.name, description: p.description, dataDate: p.dataDate, calendarId: p.calendarId, wbsNames };
 }
 const json = (v: unknown) => JSON.stringify(v);
 

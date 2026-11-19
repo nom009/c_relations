@@ -7,6 +7,7 @@ export interface ProjectRecord {
   description: string;
   dataDate: string;
   calendarId: string;
+  wbsNames: Record<string, string>; // WBS コード → 名称（無ければ {}）
   schemaVersion: number;
   version: number; // 行・メタいずれかの変更で +1（changes の since 基準）
   metaVersion: number; // project/calendars/savedViews を最後に変更した version

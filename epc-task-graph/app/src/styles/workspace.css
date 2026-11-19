@@ -2121,6 +2121,35 @@ button svg {
 .schedule-detail dd {
   margin: 0;
 }
+/* 日程タブ: 進捗の扱い（着手済み/完了）・残日数とベースライン差・実績日入力 */
+.schedule-note {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #eef4ff;
+  color: #3557a0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.schedule-note.done {
+  background: #eef6f0;
+  color: #2f6b45;
+}
+.schedule-progress {
+  margin: 14px 0 0;
+}
+.schedule-progress dt {
+  color: #627181;
+}
+.date-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.date-input-row > input {
+  flex: 1;
+  min-width: 0;
+}
 .inspector-footer {
   margin: 24px -18px -18px;
   padding: 16px 18px;
@@ -2805,4 +2834,131 @@ button svg {
   .workspace-brand small {
     display: none;
   }
+}
+
+/* 工程の見通し: 目盛り行・基準日／今日マーカー（バーはトラック内に収める） */
+.phase-track {
+  overflow: hidden;
+  min-width: 0;
+}
+.phase-row.phase-scale-row {
+  padding: 10px 0 0;
+  cursor: default;
+}
+.phase-row.phase-scale-row:hover {
+  background: none;
+}
+.phase-track.phase-scale {
+  height: 40px;
+  background: none;
+  font-size: 12px;
+  color: #676f7c;
+}
+.phase-scale-start,
+.phase-scale-end {
+  position: absolute;
+  top: 0;
+  white-space: nowrap;
+}
+.phase-scale-start {
+  left: 0;
+}
+.phase-scale-end {
+  right: 0;
+}
+.phase-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  margin-left: -1px;
+  border-left: 2px solid #d24b43;
+  pointer-events: none;
+  z-index: 1;
+}
+.phase-marker.now {
+  border-left: 2px dashed #3b6fd8;
+}
+.phase-scale .phase-marker {
+  top: 22px;
+}
+.phase-flag {
+  position: absolute;
+  top: 20px;
+  z-index: 2;
+  margin-left: 3px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  background: #fdecea;
+  color: #a52a22;
+}
+.phase-flag.to-left {
+  margin-left: -3px;
+  transform: translateX(-100%);
+}
+.phase-flag.now {
+  background: #e8f0ff;
+  color: #2c5bc4;
+}
+.metric-note.baseline-note {
+  margin-top: 4px;
+}
+.metric-note.baseline-note b {
+  font-weight: 600;
+}
+/* 要対応: 基準日の更新・ベースライン保存・期限超過などの一覧 */
+.attention-card {
+  margin: 0 24px 12px;
+  padding: 12px 14px;
+  border: 1px solid #eadfca;
+  border-radius: 8px;
+  background: #fdf8ee;
+  font-size: 12px;
+}
+.attention-card strong {
+  display: block;
+  font-size: 13px;
+  color: #7d5413;
+}
+.attention-card p {
+  margin: 6px 0 10px;
+  line-height: 1.7;
+  color: #5f6673;
+}
+.attention-card.baseline-cta {
+  border-color: #e3e8f2;
+  background: #f6f8fc;
+}
+.attention-card.baseline-cta p {
+  margin-top: 0;
+}
+.attention-group-title {
+  display: flex;
+  justify-content: space-between;
+  margin: 12px 24px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4e5665;
+}
+.attention-group-title span {
+  font-weight: 400;
+  color: #6b7280;
+}
+.attention-item.compact {
+  padding: 9px 0;
+}
+.attention-item.compact small {
+  margin: 2px 0 0;
+  line-height: 1.5;
+}
+.attention-dot.late {
+  background: #c8483f;
+}
+.attention-more {
+  margin: 6px 24px 0;
+  font-size: 12px;
+  color: #6b7280;
 }

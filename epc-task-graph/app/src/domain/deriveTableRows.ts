@@ -15,6 +15,7 @@ import type {
   ViewSpec,
 } from './types';
 import type { CpmTaskResult } from './cpm';
+import { finishVariance } from './schedule';
 import { classify, resolveVisibility } from './visibility';
 import { buildWbsTree, naturalWbsCompare, type WbsTreeNode } from './wbs';
 
@@ -34,7 +35,7 @@ interface Agg {
   minEs: number | null; // 最早ES（日オフセット・WBS行ソート＋日付表示に使用）
   maxEf: number | null; // 最遅EF（日オフセット・WBS行ソート＋日付表示に使用）
   esMinDate: string | null; // minEs に対応する暦日（WBS行の「min ES」表示・§12.3.2）
-  efMaxDate: string | null; // maxEf に対応する暦日（WBS行の「max EF」表示）
+  finishMaxDate: string | null; // 配下の終了日（その日を含む）の最大（WBS行の終了表示）
   minLs: number | null;
   minLf: number | null;
   minTf: number | null;
@@ -52,7 +53,7 @@ const cpmVal = (
 const cpmDateStr = (
   cpm: Map<string, CpmTaskResult> | null | undefined,
   id: string,
-  key: 'esDate' | 'efDate',
+  key: 'esDate' | 'finishDate',
 ): string | null => {
   const r = cpm && cpm.get(id);
   return r ? r[key] : null;
@@ -99,12 +100,12 @@ export function deriveTableRows(
       minEs: null,
       maxEf: null,
       esMinDate: null,
-      efMaxDate: null,
+      finishMaxDate: null,
       minLs: null,
       minLf: null,
       minTf: null,
     };
-    // 最早ES/最遅EF を暦日つきで畳み込む（オフセットで比較・一致した端点の日付文字列を保持）。
+    // 最早ES は暦日つきで畳み込む（オフセットで比較・一致した端点の日付文字列を保持）。
     const considerEs = (off: number | null, date: string | null): void => {
       if (off == null) return;
       if (agg.minEs == null || off < agg.minEs) {
@@ -112,12 +113,10 @@ export function deriveTableRows(
         agg.esMinDate = date;
       }
     };
-    const considerEf = (off: number | null, date: string | null): void => {
-      if (off == null) return;
-      if (agg.maxEf == null || off > agg.maxEf) {
-        agg.maxEf = off;
-        agg.efMaxDate = date;
-      }
+    // 最遅EF（オフセット）と表示用の終了日（その日を含む・ISO文字列の最大）は別々に畳み込む。
+    const considerEf = (off: number | null, finish: string | null): void => {
+      if (off != null && (agg.maxEf == null || off > agg.maxEf)) agg.maxEf = off;
+      if (finish != null && (agg.finishMaxDate == null || finish > agg.finishMaxDate)) agg.finishMaxDate = finish;
     };
     for (const c of node.taskChildren) {
       const t = c.task;
@@ -126,7 +125,7 @@ export function deriveTableRows(
       if (criticalTasks && criticalTasks.has(t.id)) agg.hasCritical = true;
       if (t.isMilestone) agg.hasMilestone = true;
       considerEs(cpmVal(cpmByTask, t.id, 'es'), cpmDateStr(cpmByTask, t.id, 'esDate'));
-      considerEf(cpmVal(cpmByTask, t.id, 'ef'), cpmDateStr(cpmByTask, t.id, 'efDate'));
+      considerEf(cpmVal(cpmByTask, t.id, 'ef'), cpmDateStr(cpmByTask, t.id, 'finishDate'));
       agg.minLs = minN(agg.minLs, cpmVal(cpmByTask, t.id, 'ls'));
       agg.minLf = minN(agg.minLf, cpmVal(cpmByTask, t.id, 'lf'));
       agg.minTf = minN(agg.minTf, cpmVal(cpmByTask, t.id, 'totalFloat'));
@@ -138,7 +137,7 @@ export function deriveTableRows(
       agg.hasCritical = agg.hasCritical || ca.hasCritical;
       agg.hasMilestone = agg.hasMilestone || ca.hasMilestone;
       considerEs(ca.minEs, ca.esMinDate);
-      considerEf(ca.maxEf, ca.efMaxDate);
+      considerEf(ca.maxEf, ca.finishMaxDate);
       agg.minLs = minN(agg.minLs, ca.minLs);
       agg.minLf = minN(agg.minLf, ca.minLf);
       agg.minTf = minN(agg.minTf, ca.minTf);
@@ -182,6 +181,15 @@ export function deriveTableRows(
         }
         case 'critical':
           return { v: criticalTasks && criticalTasks.has(t.id) ? 1 : 0, missing: false };
+        case 'actualStart':
+        case 'actualFinish': {
+          const d = t[key];
+          return { v: d || '', missing: !d };
+        }
+        case 'variance': {
+          const val = finishVariance(t, cpmByTask ? cpmByTask.get(t.id) : undefined);
+          return { v: val ?? 0, missing: val == null };
+        }
         default:
           return { v: '', missing: false };
       }
@@ -276,7 +284,9 @@ export function deriveTableRows(
           hasMilestone: agg.hasMilestone,
           avgProgress: agg.count ? Math.round(agg.sumProgress / agg.count) : 0,
           esMin: agg.esMinDate,
-          efMax: agg.efMaxDate,
+          efMax: agg.finishMaxDate,
+          esOff: agg.minEs,
+          efOff: agg.maxEf,
         });
         wbsRows += 1;
         if (!collapsed) emit(e.node, depth + 1);

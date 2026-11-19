@@ -24,6 +24,24 @@ export function showcaseDoc(statusDate?: string) {
   doc.project.description =
     "サンプルデータ — 架空のEPCプロジェクト。自由に編集してお試しください。";
   doc.project.dataDate = dataDate;
+  // WBS の名称（グラフ集約・WBSツリー・テーブル等に表示）。
+  doc.project.wbsNames = {
+    "1": "設計",
+    "1.1": "基本設計",
+    "1.2": "機械・配管設計",
+    "1.3": "電気・計装設計",
+    "2": "調達",
+    "2.1": "主要機器",
+    "2.2": "配管資材",
+    "2.3": "電気機器",
+    "3": "建設",
+    "3.1": "土木・準備工事",
+    "3.2": "機械・配管工事",
+    "3.3": "電気・計装工事",
+    "4": "試運転・引き渡し",
+    "4.1": "試運転",
+    "4.2": "引き渡し",
+  };
   const rows: [
     string,
     string,

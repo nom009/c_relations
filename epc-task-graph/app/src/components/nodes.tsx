@@ -5,7 +5,7 @@
 import { memo } from 'react';
 import { Handle, Position, useStore as useRFStore, type NodeProps } from '@xyflow/react';
 import { DISC_COLOR } from '../adapters/reactflow';
-import { DISC_COLOR_ON, type VisibleAggregateNode, type VisibleTaskNode } from '../domain';
+import { DISC_COLOR_ON, wbsNameOf, type VisibleAggregateNode, type VisibleTaskNode } from '../domain';
 import { useApp } from '../store/store';
 import { CircuitTrace } from './circuitFx';
 
@@ -134,6 +134,7 @@ function dominantDiscipline(d: VisibleAggregateNode['disc']): 'E' | 'P' | 'C' | 
 
 export const AggregateNode = memo(function AggregateNode({ id, data }: NodeProps) {
   const n = (data as { n: VisibleAggregateNode }).n;
+  const wbsName = useApp((s) => wbsNameOf(n.prefix, s.project.wbsNames)); // WBS 名称（無ければ ''）
   const total = n.count || 1;
   const expand = () => useApp.getState().expandAggregate(id);
   const dom = dominantDiscipline(n.disc);
@@ -149,6 +150,11 @@ export const AggregateNode = memo(function AggregateNode({ id, data }: NodeProps
         <Handle type="target" position={Position.Left} />
         <div className="agg-head" style={{ background: '#64748b' }}>
           <span className="agg-prefix">⋯ {n.prefix}</span>
+          {wbsName ? (
+            <span className="agg-name" title={wbsName}>
+              {wbsName}
+            </span>
+          ) : null}
           <span className="agg-count">{n.count}</span>
         </div>
         <div className="agg-body">
@@ -165,11 +171,16 @@ export const AggregateNode = memo(function AggregateNode({ id, data }: NodeProps
     <div
       className={'agg-card' + (n.dim ? ' dim' : '') + (n.hasCritical ? ' has-cp' : '')}
       onDoubleClick={expand}
-      title={`WBS ${n.prefix}：${n.count}タスク・主体${dom}・進捗${n.avgProgress}%（ダブルクリック/E で展開）`}
+      title={`WBS ${n.prefix}${wbsName ? ' ' + wbsName : ''}：${n.count}タスク・主体${dom}・進捗${n.avgProgress}%（ダブルクリック/E で展開）`}
     >
       <Handle type="target" position={Position.Left} />
       <div className="agg-head" style={{ background: domColor }}>
         <span className="agg-prefix">{n.prefix}</span>
+        {wbsName ? (
+          <span className="agg-name" title={wbsName}>
+            {wbsName}
+          </span>
+        ) : null}
         <span className="agg-count">{n.count}</span>
         {n.hasMilestone ? <span className="agg-ms" title="マイルストーンを含む">◆</span> : null}
         {n.hasCritical ? <span className="agg-cp" title="内部にクリティカルタスクあり">CP</span> : null}

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useApp, selectActiveCalendar, selectReadOnly } from "../../store/store";
-import { isValidIsoDate, mergeHolidays } from "../../domain";
+import { isValidIsoDate, mergeHolidays, todayIso } from "../../domain";
 import { API_MODE } from "../../storage/mode";
 import { Dialog } from "./Dialog";
+import { WbsNamesDialog } from "./WbsNamesDialog";
 import { HolidayPresets } from "../HolidayPresets";
 export function SettingsDialog({
   onClose,
@@ -24,13 +25,15 @@ export function SettingsDialog({
     [user, setUser] = useState(me),
     [working, setWorking] = useState(cal?.workingDays ?? [1, 2, 3, 4, 5]),
     [holidays, setHolidays] = useState(cal?.holidays.join("\n") ?? ""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [namesOpen, setNamesOpen] = useState(false);
   return (
+    <>
     <Dialog
       title={isNew ? "プロジェクトを作成" : "プロジェクト設定"}
       subtitle={
         isNew
-          ? "名前と開始基準日を決めて、工程づくりを始めましょう。"
+          ? "名前と基準日を決めて、工程づくりを始めましょう。"
           : "工程計算とワークスペースの基本設定"
       }
       onClose={onClose}
@@ -79,15 +82,27 @@ export function SettingsDialog({
             />
           </label>
           <label className="form-field">
-            工程計算の開始基準日
-            <input
-              type="date"
-              required
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
+            基準日（進捗の締め日）
+            <span className="date-input-row">
+              <input
+                type="date"
+                required
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+              <button
+                type="button"
+                className="btn"
+                data-testid="settings-data-date-today"
+                onClick={() => setDate(todayIso())}
+              >
+                今日
+              </button>
+            </span>
             <small>
-              この日を起点に、依存関係と稼働日から日程を計算します。
+              {isNew
+                ? "工程計算の起点です。進捗を記録し始めたら、締め日（通常は今日）に進めます。"
+                : "この日から残りの日程を計算します。完了タスクは実績日で固定、着手済みタスクは残作業をこの日から再計算します。進捗を更新したら今日に進めてください。"}
             </small>
           </label>
           {!isNew && (
@@ -149,6 +164,24 @@ export function SettingsDialog({
                   onCleared={() => setHolidays("")}
                 />
               </details>
+              {!readOnly && (
+                <div className="form-field">
+                  WBSの名称
+                  <div>
+                    <button
+                      type="button"
+                      className="btn"
+                      data-testid="settings-wbs-names"
+                      onClick={() => setNamesOpen(true)}
+                    >
+                      WBSの名称を編集
+                    </button>
+                  </div>
+                  <small>
+                    WBSコードに表示名（例：1.2 → 配管設計）を付けます。名称はそのダイアログで保存した時点で反映されます。
+                  </small>
+                </div>
+              )}
               <div className="storage-note">
                 {API_MODE ? (
                   <div data-testid="storage-server">
@@ -185,5 +218,8 @@ export function SettingsDialog({
         </div>
       </form>
     </Dialog>
+    {/* 設定ダイアログの上に重ねる（form の入れ子と Esc の伝播を避けるため兄弟に置く） */}
+    {namesOpen ? <WbsNamesDialog onClose={() => setNamesOpen(false)} /> : null}
+    </>
   );
 }

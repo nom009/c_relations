@@ -58,9 +58,27 @@ interface ProjectSqlRow {
   metaVersion: number;
   calendars: string;
   savedViews: string;
+  wbsNames: string | null;
   createdAt: string;
   updatedAt: string;
   updatedBy: string;
+}
+
+// wbsNames 列（JSON）を防御的に読む。壊れた値・文字列以外の値は捨てる。
+function parseWbsNames(raw: string | null): Record<string, string> {
+  if (!raw) return {};
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out;
+  for (const [k, name] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof name === 'string' && k !== '__proto__') out[k] = name;
+  }
+  return out;
 }
 
 function toRecord(r: ProjectSqlRow): ProjectRecord {
@@ -70,6 +88,7 @@ function toRecord(r: ProjectSqlRow): ProjectRecord {
     description: r.description,
     dataDate: r.dataDate,
     calendarId: r.calendarId,
+    wbsNames: parseWbsNames(r.wbsNames),
     schemaVersion: r.schemaVersion,
     version: r.version,
     metaVersion: r.metaVersion,
@@ -82,7 +101,7 @@ function toRecord(r: ProjectSqlRow): ProjectRecord {
 }
 
 const PROJECT_COLUMNS =
-  'id, name, description, dataDate, calendarId, schemaVersion, version, metaVersion, calendars, savedViews, createdAt, updatedAt, updatedBy';
+  'id, name, description, dataDate, calendarId, schemaVersion, version, metaVersion, calendars, savedViews, wbsNames, createdAt, updatedAt, updatedBy';
 
 interface MemberSqlRow {
   email: string;
@@ -225,6 +244,7 @@ class SqlTx implements Tx {
       p('metaVersion', T_INT, rec.metaVersion),
       p('calendars', T_TEXT, JSON.stringify(rec.calendars)),
       p('savedViews', T_TEXT, JSON.stringify(rec.savedViews)),
+      p('wbsNames', T_TEXT, Object.keys(rec.wbsNames ?? {}).length ? JSON.stringify(rec.wbsNames) : null),
       p('createdAt', T_TEXT, rec.createdAt),
       p('updatedAt', mssql.NVarChar(64), rec.updatedAt),
       p('updatedBy', T_EMAIL, rec.updatedBy),
@@ -235,7 +255,7 @@ class SqlTx implements Tx {
     try {
       await this.q(
         `INSERT INTO dbo.projects (${PROJECT_COLUMNS})
-         VALUES (@id, @name, @description, @dataDate, @calendarId, @schemaVersion, @version, @metaVersion, @calendars, @savedViews, @createdAt, @updatedAt, @updatedBy)`,
+         VALUES (@id, @name, @description, @dataDate, @calendarId, @schemaVersion, @version, @metaVersion, @calendars, @savedViews, @wbsNames, @createdAt, @updatedAt, @updatedBy)`,
         this.projectParams(rec),
       );
     } catch (e) {
@@ -249,7 +269,7 @@ class SqlTx implements Tx {
     await this.q(
       `UPDATE dbo.projects SET name = @name, description = @description, dataDate = @dataDate, calendarId = @calendarId,
          schemaVersion = @schemaVersion, version = @version, metaVersion = @metaVersion, calendars = @calendars,
-         savedViews = @savedViews, createdAt = @createdAt, updatedAt = @updatedAt, updatedBy = @updatedBy
+         savedViews = @savedViews, wbsNames = @wbsNames, createdAt = @createdAt, updatedAt = @updatedAt, updatedBy = @updatedBy
        WHERE id = @id`,
       this.projectParams(rec),
     );

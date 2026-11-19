@@ -6,7 +6,7 @@ import { Dialog } from "./workspace/Dialog";
 // ============================================================================
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../store/store";
-import { DISC_COLOR, type Task } from "../domain";
+import { DISC_COLOR, wbsLabel, wbsNameOf, wbsPath, type Task } from "../domain";
 
 export function SearchPalette({ onPick }: { onPick?: () => void }) {
   const [open, setOpen] = useState(false);
@@ -14,6 +14,7 @@ export function SearchPalette({ onPick }: { onPick?: () => void }) {
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const tasks = useApp((s) => s.tasks);
+  const wbsNames = useApp((s) => s.project.wbsNames);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -33,19 +34,43 @@ export function SearchPalette({ onPick }: { onPick?: () => void }) {
     if (open) setTimeout(() => inputRef.current?.focus(), 0);
   }, [open]);
 
+  // WBS 名称（祖先を含む）も検索対象にする。コードごとにキャッシュ。
+  const wbsNamesHay = useMemo(() => {
+    const cache = new Map<string, string>();
+    return (code: string): string => {
+      let v = cache.get(code);
+      if (v === undefined) {
+        v = wbsPath(code)
+          .map((p) => wbsNameOf(p, wbsNames))
+          .filter(Boolean)
+          .join(" ");
+        cache.set(code, v);
+      }
+      return v;
+    };
+  }, [wbsNames]);
+
   const results = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return tasks.slice(0, 8);
     const out: Task[] = [];
     for (const t of tasks) {
-      const hay = (t.name + " " + t.wbsCode + " " + t.assignee).toLowerCase();
+      const hay = (
+        t.name +
+        " " +
+        t.wbsCode +
+        " " +
+        wbsNamesHay(t.wbsCode) +
+        " " +
+        t.assignee
+      ).toLowerCase();
       if (hay.includes(s)) {
         out.push(t);
         if (out.length >= 20) break;
       }
     }
     return out;
-  }, [q, tasks]);
+  }, [q, tasks, wbsNamesHay]);
 
   if (!open) return null;
 
@@ -123,7 +148,18 @@ export function SearchPalette({ onPick }: { onPick?: () => void }) {
                   className="disc-dot"
                   style={{ background: DISC_COLOR[t.discipline] }}
                 />
-                <span className="mono">{t.wbsCode || "—"}</span>
+                <span
+                  className="mono"
+                  title={
+                    wbsNamesHay(t.wbsCode)
+                      ? wbsPath(t.wbsCode)
+                          .map((p) => wbsLabel(p, wbsNames))
+                          .join(" › ")
+                      : undefined
+                  }
+                >
+                  {t.wbsCode || "—"}
+                </span>
                 <span className="s-name">{t.name || "（無題）"}</span>
                 <span className="s-assignee">{t.assignee}</span>
               </div>

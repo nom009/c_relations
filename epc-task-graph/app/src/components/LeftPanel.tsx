@@ -1,10 +1,12 @@
 // 左パネル（§2.8）: 私は誰・組込みビュー・フィルタ（DIM/ISOLATE）・展開レベル・稼働カレンダー・統計・凡例。
 import { useMemo, useState } from "react";
-import { useApp, selectActiveCalendar } from "../store/store";
+import { useApp, selectActiveCalendar, selectReadOnly } from "../store/store";
 import { useAssigneeOptions, useVisibleGraph } from "../store/hooks";
 import { HolidayPresets } from "./HolidayPresets";
+import { WbsNamesDialog } from "./workspace/WbsNamesDialog";
 import {
   naturalWbsCompare,
+  wbsNameOf,
   isValidIsoDate,
   DISCIPLINES,
   STATUSES,
@@ -53,8 +55,11 @@ function buildWbsCountTree(tasks: Task[]): WbsNode[] {
 
 function WbsTreePanel() {
   const tasks = useApp((s) => s.tasks);
+  const wbsNames = useApp((s) => s.project.wbsNames);
+  const readOnly = useApp(selectReadOnly);
   const activePrefixes = useApp((s) => s.viewSpec.filter.wbsPrefixes);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [namesOpen, setNamesOpen] = useState(false);
   const tree = useMemo(() => buildWbsCountTree(tasks), [tasks]);
   const active = new Set(activePrefixes ?? []);
 
@@ -71,47 +76,71 @@ function WbsTreePanel() {
       useApp.getState().setFilter({ wbsPrefixes: undefined });
     else useApp.getState().setFilter({ wbsPrefixes: [p] });
   };
-  const renderNode = (node: WbsNode, depth: number): React.ReactNode => (
-    <div key={node.prefix}>
-      <div
-        className={"wbs-tree-row" + (active.has(node.prefix) ? " active" : "")}
-      >
-        {node.children.length ? (
-          <button
-            className="wbs-tree-tog"
-            onClick={() => toggle(node.prefix)}
-            title={expanded.has(node.prefix) ? "折り畳み" : "展開"}
-          >
-            {expanded.has(node.prefix) ? "▾" : "▸"}
-          </button>
-        ) : (
-          <span className="wbs-tree-tog empty" />
-        )}
-        <button
-          type="button"
-          className="wbs-tree-label"
-          style={{ paddingLeft: depth * 4 }}
-          title="このWBSで絞り込み（再クリックで解除）"
-          data-prefix={node.prefix}
-          onClick={() => clickNode(node.prefix)}
+  const renderNode = (node: WbsNode, depth: number): React.ReactNode => {
+    const name = wbsNameOf(node.prefix, wbsNames); // WBS 名称（無ければ ''）
+    return (
+      <div key={node.prefix}>
+        <div
+          className={"wbs-tree-row" + (active.has(node.prefix) ? " active" : "")}
         >
-          <span className="mono">{node.prefix}</span>{" "}
-          <span className="muted">({node.count})</span>
-        </button>
+          {node.children.length ? (
+            <button
+              className="wbs-tree-tog"
+              onClick={() => toggle(node.prefix)}
+              title={expanded.has(node.prefix) ? "折り畳み" : "展開"}
+            >
+              {expanded.has(node.prefix) ? "▾" : "▸"}
+            </button>
+          ) : (
+            <span className="wbs-tree-tog empty" />
+          )}
+          <button
+            type="button"
+            className="wbs-tree-label"
+            style={{ paddingLeft: depth * 4 }}
+            title={
+              (name ? `${node.prefix} ${name}：` : "") +
+              "このWBSで絞り込み（再クリックで解除）"
+            }
+            data-prefix={node.prefix}
+            onClick={() => clickNode(node.prefix)}
+          >
+            <span className="mono">{node.prefix}</span>{" "}
+            {name ? (
+              <>
+                <span className="wbs-tree-name">{name}</span>{" "}
+              </>
+            ) : null}
+            <span className="muted">({node.count})</span>
+          </button>
+        </div>
+        {expanded.has(node.prefix)
+          ? node.children.map((c) => renderNode(c, depth + 1))
+          : null}
       </div>
-      {expanded.has(node.prefix)
-        ? node.children.map((c) => renderNode(c, depth + 1))
-        : null}
-    </div>
-  );
+    );
+  };
 
   if (!tree.length) return null;
   return (
     <>
-      <h3>WBSツリー</h3>
+      <div className="wbs-tree-head">
+        <h3>WBSツリー</h3>
+        {!readOnly ? (
+          <button
+            type="button"
+            className="wbs-tree-edit"
+            title="WBSコードに名称（例：1.2 → 配管設計）を付ける"
+            onClick={() => setNamesOpen(true)}
+          >
+            名称を編集
+          </button>
+        ) : null}
+      </div>
       <div className="wbs-tree" data-testid="wbs-tree">
         {tree.map((n) => renderNode(n, 0))}
       </div>
+      {namesOpen ? <WbsNamesDialog onClose={() => setNamesOpen(false)} /> : null}
     </>
   );
 }

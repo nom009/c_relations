@@ -28,8 +28,9 @@
 //   成功時、変更行の rev はサーバーが採番（現 rev + 1、新規は 1）し newRevs で返す。
 //   updatedBy はサーバーが認証ユーザーの email で上書きする。
 //   適用後の全体を validateDoc（スキーマ＋DAG・参照整合）で検証し、不正なら 422（適用しない）。
-// 共有範囲: tasks / dependencies / project(name, description, dataDate, calendarId) / calendars / savedViews。
+// 共有範囲: tasks / dependencies / project(name, description, dataDate, calendarId, wbsNames) / calendars / savedViews。
 //   project・calendars・savedViews は変更があった時だけ送る（後勝ち）。viewState はユーザー個人ごとに保存。
+//   project.wbsNames は全体を送る（未設定は {}・項目単位のマージはしない）。
 // 変更通知（§7.2 L2）: クライアントは changes?since=version をポーリングし、他者の変更を取り込む。
 // ============================================================================
 import type { Calendar, Dependency, GraphDoc, ProjectMeta, SavedView, Task } from '../domain';

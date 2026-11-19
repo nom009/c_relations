@@ -17,10 +17,13 @@ const isRec = (v: unknown): v is Rec => !!v && typeof v === 'object' && !Array.i
 const finiteOr0 = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
-// undefined（と constraintDate 以外の null）は欠損扱いにして既定値を残す。
+// null を「未設定」として保持する日付列（それ以外の null は欠損扱い）。
+const NULLABLE_DATE_KEYS = ['constraintDate', 'actualStart', 'actualFinish', 'baselineStart', 'baselineFinish'];
+
+// undefined（と NULLABLE_DATE_KEYS 以外の null）は欠損扱いにして既定値を残す。
 function present(row: Rec): Rec {
   return Object.fromEntries(
-    Object.entries(row).filter(([k, v]) => v !== undefined && (v !== null || k === 'constraintDate')),
+    Object.entries(row).filter(([k, v]) => v !== undefined && (v !== null || NULLABLE_DATE_KEYS.includes(k))),
   );
 }
 
@@ -43,6 +46,12 @@ function repairTask(row: Rec): Rec {
   t.position = { x: finiteOr0(pos.x), y: finiteOr0(pos.y) };
   if (t.constraintDate !== null && !(typeof t.constraintDate === 'string' && isValidIsoDate(t.constraintDate))) {
     t.constraintDate = null;
+  }
+  // 実績/ベースライン日は任意列。あるのに不正な値なら未設定（null）に戻す。
+  for (const k of NULLABLE_DATE_KEYS) {
+    if (k === 'constraintDate' || !(k in t)) continue;
+    const v = t[k];
+    if (v !== null && !(typeof v === 'string' && isValidIsoDate(v))) t[k] = null;
   }
   return same(row, t) ? row : t;
 }

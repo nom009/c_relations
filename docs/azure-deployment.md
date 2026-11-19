@@ -137,4 +137,5 @@ API は `npm run package:deploy` で `epc-task-graph/api-deploy/` に組み立�
   「割り当てが必要」をはい → 「ユーザーとグループ」で対象グループを割り当て（アプリの変更は不要）。
   社外の人は Entra ID にゲスト招待すると同じ手順で使える。
 - テーブルは API の初回アクセス時に自動作成されます（`epc-task-graph/api/sql/schema.sql` と同じ定義）。
+  既存 DB に後から増えた列（例: `projects.wbsNames`＝WBS 名称）も、デプロイ後の初回アクセス時に自動で追加されます（冪等・手作業不要）。
 - ローカル開発: `epc-task-graph/api/README.md` を参照（メモリ上のDBで API を起動し、`VITE_STORAGE=api npm run dev`）。

@@ -13,10 +13,14 @@ CREATE TABLE dbo.projects (
   metaVersion INT NOT NULL,
   calendars NVARCHAR(MAX) NOT NULL,
   savedViews NVARCHAR(MAX) NOT NULL,
+  wbsNames NVARCHAR(MAX) NULL,
   createdAt NVARCHAR(MAX) NOT NULL,
   updatedAt NVARCHAR(64) NOT NULL,
   updatedBy NVARCHAR(320) NOT NULL
 )`,
+  // 列追加の移行（既存 DB 向け・冪等）。新規 DB では上の CREATE で作成済みのため何もしない。
+  `IF COL_LENGTH(N'dbo.projects', N'wbsNames') IS NULL
+ALTER TABLE dbo.projects ADD wbsNames NVARCHAR(MAX) NULL`,
   `IF OBJECT_ID(N'dbo.tasks', N'U') IS NULL
 CREATE TABLE dbo.tasks (
   projectId NVARCHAR(64) NOT NULL,

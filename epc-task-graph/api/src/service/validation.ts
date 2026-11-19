@@ -36,6 +36,9 @@ export function prepareDoc(raw: unknown): GraphDoc {
   if (!v.ok) throw invalid('ドキュメントの検証に失敗しました', v.errors.slice(0, MAX_ERRORS));
   const doc = parseDoc(repaired); // 未知のキーを落とした純粋なコピー
   if (!doc) throw invalid('ドキュメントの検証に失敗しました');
+  const errs: string[] = [];
+  checkWbsNames('project.wbsNames', doc.project.wbsNames, errs);
+  if (errs.length) throw invalid('ドキュメントの検証に失敗しました', errs.slice(0, MAX_ERRORS));
   checkIdLen('project', doc.project.id);
   for (const t of doc.tasks) checkIdLen('task', t.id);
   for (const d of doc.dependencies) checkIdLen('dependency', d.id);
@@ -48,7 +51,7 @@ export interface ParsedPatch {
   deleteTaskIds: { id: string; baseRev: number }[];
   upsertDeps: { row: Dependency; baseRev: number }[];
   deleteDepIds: { id: string; baseRev: number }[];
-  project?: Partial<Pick<GraphDoc['project'], 'name' | 'description' | 'dataDate' | 'calendarId'>>;
+  project?: Partial<Pick<GraphDoc['project'], 'name' | 'description' | 'dataDate' | 'calendarId' | 'wbsNames'>>;
   viewState?: ViewState;
   savedViews?: SavedView[];
   calendars?: Calendar[];
@@ -69,8 +72,25 @@ const patchEnvelope = z.object({
 });
 
 const projectPatchSchema = projectMetaSchema
-  .pick({ name: true, description: true, dataDate: true, calendarId: true })
+  .pick({ name: true, description: true, dataDate: true, calendarId: true, wbsNames: true })
   .partial();
+
+// WBS 名称（project.wbsNames）: 件数とコード長の上限（app/src/domain/wbs.ts の WBS_NAMES_MAX / WBS_CODE_MAX と同値）。
+// 名称の長さ（200 字）はドメインのスキーマで検証する。
+export const MAX_WBS_NAMES = 2000;
+export const MAX_WBS_CODE_LEN = 100;
+function checkWbsNames(prefix: string, names: Record<string, string> | undefined, errors: string[]): void {
+  if (!names) return;
+  const codes = Object.keys(names);
+  if (codes.length > MAX_WBS_NAMES) {
+    errors.push(`${prefix}: 最大 ${MAX_WBS_NAMES} 件までです`);
+    return;
+  }
+  for (const code of codes) {
+    if (!code.trim() || code.length > MAX_WBS_CODE_LEN)
+      errors.push(`${prefix}: WBS コードは 1〜${MAX_WBS_CODE_LEN} 文字です: ${code.slice(0, 20)}`);
+  }
+}
 
 function fmt(prefix: string, issues: { path: PropertyKey[]; message: string }[]): string[] {
   return issues.map((i) => `${prefix}${i.path.length ? '.' + i.path.map(String).join('.') : ''}: ${i.message}`);
@@ -141,7 +161,10 @@ export function parsePatch(body: unknown): ParsedPatch {
   if (b.project !== undefined) {
     const r = projectPatchSchema.safeParse(b.project);
     if (!r.success) errors.push(...fmt('project', r.error.issues));
-    else out.project = r.data;
+    else {
+      checkWbsNames('project.wbsNames', r.data.wbsNames, errors);
+      out.project = r.data;
+    }
   }
   if (b.viewState !== undefined) {
     const r = viewStateSchema.safeParse(b.viewState);

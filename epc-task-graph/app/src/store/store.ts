@@ -1,11 +1,14 @@
 import { normalizeTaskPatch } from "../domain/taskEditing";
 import { showcaseDoc } from "../domain/showcase";
+import { actualsForStatusChange, baselinePatch, todayIso } from "../domain/schedule";
+import type { CpmResult } from "../domain/cpm";
+import { selectCpm } from "./selectors";
 // ============================================================================
 // zustand ストア（§4.2 store層）: domain を包み、Undo/永続化/表示状態を管理。
 // - zundo(temporal) + diff（差分保存、§2.3）: JSON.stringify 丸ごと保存は禁止。
 // - immer: 不変更新で未変更オブジェクトを参照共有（履歴メモリ対策、§2.3）。
 // - ダーティ追跡（§6.1/§7.2 L1の土台）: 変更/削除した行IDを保持し、後PRの savePatch へ渡す。
-// 状態のうち temporal が追跡するのは { tasks, dependencies } のみ（partialize）。
+// 状態のうち temporal が追跡するのは { tasks, dependencies } と project.wbsNames のみ（partialize/diff）。
 // viewSpec/selection/collapsed/focus/filter は履歴に含めない（§2.3）。
 // ============================================================================
 import { create } from "zustand";
@@ -42,6 +45,9 @@ import {
   allTopPrefixes,
   emptyDoc,
   wbsPath,
+  WBS_NAME_MAX,
+  WBS_CODE_MAX,
+  WBS_NAMES_MAX,
   NewerSchemaError,
 } from "../domain";
 import { runFullLayout } from "../layout/layout";
@@ -98,10 +104,13 @@ export const ALL_TABLE_COLUMNS: TableColumnKey[] = [
   "lf",
   "totalFloat",
   "critical",
+  "actualStart",
+  "actualFinish",
+  "variance",
   "deps",
 ];
 
-// 既定表示列（§12.3.2 「既定」列）。wbsPath / ls / lf は既定非表示。
+// 既定表示列（§12.3.2 「既定」列）。wbsPath / ls / lf / 実績・差異は既定非表示。
 const DEFAULT_TABLE_COLUMNS: TableColumnKey[] = [
   "wbsCode",
   "name",
@@ -186,6 +195,25 @@ function readOnlyBlocked(): boolean {
   return true;
 }
 
+// 実績日の自動記録に使う CPM（ステータス/進捗を変える編集の時だけ・1アクション1回）。
+function cpmForStatusEdit(patch: Partial<Task>): CpmResult | null {
+  if (patch.status === undefined && patch.progress === undefined) return null;
+  const s = useApp.getState();
+  return selectCpm(s.tasks, s.dependencies, s.project.dataDate, selectActiveCalendar(s));
+}
+
+// ステータスが変わる編集では実績日を自動記録する（パッチで明示した実績日が優先）。
+function patchWithActuals(
+  t: Task,
+  patch: Partial<Task>,
+  cpm: CpmResult | null,
+  today: string,
+): Partial<Task> {
+  const norm = normalizeTaskPatch(t, patch);
+  if (!cpm || norm.status === undefined || norm.status === t.status) return norm;
+  return { ...actualsForStatusChange(t, norm.status, cpm.byTask.get(t.id), today), ...norm };
+}
+
 const noSelection = (): Selection => ({ taskId: null, edgeId: null, aggId: null });
 
 // 折り畳み状態は表示（viewSpec）と永続（viewState）の両方へ同じ値を書く。
@@ -268,6 +296,8 @@ export interface AppState {
   toggleSelectedId: (id: string) => void; // Cmd/Ctrl+クリックのトグル
   bulkUpdateTasks: (ids: string[], patch: Partial<Task>) => void; // 一括更新（1確定=1 Undo）
   applyCsvMerge: (plan: CsvMergePlan) => void; // CSV 更新取込の反映（1回=1 Undo）
+  setBaseline: (ids?: string[]) => void; // 現在の計画をベースラインとして保存（省略時は全タスク・1回=1 Undo）
+  clearBaseline: () => void; // 全タスクのベースラインを消去（1回=1 Undo）
   setFilter: (patch: Partial<GraphFilter>) => void;
   clearFilter: () => void;
   setBoundary: (up: number, down: number) => void; // 「担当＋前後」の受け渡し世代（前up/後down）
@@ -317,6 +347,8 @@ export interface AppState {
   renameProject: (name: string) => void;
   setDataDate: (d: string) => void;
   updateCalendar: (patch: Partial<Calendar>) => void; // 稼働曜日/祝日の編集（CPM連動・§9.1 Phase2）
+  setWbsName: (code: string, name: string) => void; // WBS 名称（空で削除・Undo 可）
+  setWbsNames: (names: Record<string, string>) => void; // 複数コードを一括で（1 回の Undo）
   refreshProjects: () => Promise<void>;
   switchProject: (id: string) => Promise<void>;
   newProject: (name?: string) => Promise<void>;
@@ -468,6 +500,13 @@ function restoreHistory(direction: "undo" | "redo") {
       s.connectSource = null;
     if (s.selection.taskId && !currentTasks.has(s.selection.taskId))
       s.selection.taskId = null;
+    // project は履歴から WBS 名称だけを戻す（名前・基準日・version は巻き戻さない）
+    if (after.project !== before.project) {
+      const project: ProjectMeta = { ...before.project, updatedAt: nowISO() };
+      if (after.project.wbsNames) project.wbsNames = after.project.wbsNames;
+      else delete project.wbsNames;
+      s.project = project;
+    }
   });
   scheduleSave();
 }
@@ -748,10 +787,12 @@ export const useApp = create<AppState>()(
       },
       updateTask: (id, patch) => {
         if (readOnlyBlocked()) return;
+        const cpm = cpmForStatusEdit(patch);
+        const today = todayIso();
         set((s) => {
           const t = s.tasks.find((x) => x.id === id);
           if (!t) return;
-          Object.assign(t, normalizeTaskPatch(t, patch));
+          Object.assign(t, patchWithActuals(t, patch, cpm, today));
           t.rev += 1;
           t.updatedAt = nowISO();
           t.updatedBy = s.me;
@@ -934,11 +975,13 @@ export const useApp = create<AppState>()(
       bulkUpdateTasks: (ids, patch) => {
         if (readOnlyBlocked()) return;
         const idset = new Set(ids);
+        const cpm = cpmForStatusEdit(patch);
+        const today = todayIso();
         set((s) => {
           const now = nowISO();
           for (const t of s.tasks) {
             if (!idset.has(t.id)) continue;
-            Object.assign(t, normalizeTaskPatch(t, patch));
+            Object.assign(t, patchWithActuals(t, patch, cpm, today));
             t.rev += 1;
             t.updatedAt = now;
             t.updatedBy = s.me;
@@ -1032,6 +1075,51 @@ export const useApp = create<AppState>()(
           if (s.selection.edgeId && !deps.some((d) => d.id === s.selection.edgeId)) s.selection.edgeId = null;
         });
         scheduleSave();
+      },
+      // ベースライン保存: 現在の CPM の開始/終了（その日を含む）を写す。1回の set() ＝ 1 Undo。
+      setBaseline: (ids) => {
+        if (readOnlyBlocked()) return;
+        const st = get();
+        const cpm = selectCpm(st.tasks, st.dependencies, st.project.dataDate, selectActiveCalendar(st));
+        const target = ids ? new Set(ids) : null;
+        let count = 0;
+        set((s) => {
+          const now = nowISO();
+          for (const t of s.tasks) {
+            if (target && !target.has(t.id)) continue;
+            const r = cpm.byTask.get(t.id);
+            if (!r) continue;
+            count += 1;
+            const b = baselinePatch(r);
+            if (t.baselineStart === b.baselineStart && t.baselineFinish === b.baselineFinish) continue;
+            Object.assign(t, b);
+            t.rev += 1;
+            t.updatedAt = now;
+            t.updatedBy = s.me;
+            s.dirty.tasks.add(t.id);
+          }
+        });
+        scheduleSave();
+        get().showToast(`ベースラインを保存しました（${count}件）`);
+      },
+      clearBaseline: () => {
+        if (readOnlyBlocked()) return;
+        let count = 0;
+        set((s) => {
+          const now = nowISO();
+          for (const t of s.tasks) {
+            if (t.baselineStart == null && t.baselineFinish == null) continue;
+            count += 1;
+            t.baselineStart = null;
+            t.baselineFinish = null;
+            t.rev += 1;
+            t.updatedAt = now;
+            t.updatedBy = s.me;
+            s.dirty.tasks.add(t.id);
+          }
+        });
+        scheduleSave();
+        get().showToast(`ベースラインをクリアしました（${count}件）`);
       },
       setFilter: (patch) =>
         set((s) => {
@@ -1471,6 +1559,38 @@ export const useApp = create<AppState>()(
         });
         scheduleSave();
       },
+      setWbsName: (code, name) => {
+        const key = code.trim();
+        if (!key) return;
+        get().setWbsNames({ ...(get().project.wbsNames ?? {}), [key]: name });
+      },
+      setWbsNames: (names) => {
+        if (readOnlyBlocked()) return;
+        // 前後空白を除き 200 字まで。空の名称はキーごと削除する。サーバー上限（コード長・件数）を超える分は付けない。
+        const next: Record<string, string> = {};
+        let count = 0;
+        for (const [code, name] of Object.entries(names)) {
+          const key = code.trim();
+          const value = String(name ?? "").trim().slice(0, WBS_NAME_MAX);
+          if (!key || !value || key === "__proto__" || key.length > WBS_CODE_MAX) continue;
+          if (count >= WBS_NAMES_MAX) break;
+          next[key] = value;
+          count++;
+        }
+        const cur = get().project.wbsNames ?? {};
+        const curKeys = Object.keys(cur);
+        if (
+          curKeys.length === Object.keys(next).length &&
+          curKeys.every((k) => Object.prototype.hasOwnProperty.call(next, k) && cur[k] === next[k])
+        )
+          return;
+        // wbsNames の参照が変わる → temporal の diff が 1 回の Undo として積む
+        set((s) => {
+          s.project.wbsNames = next;
+          s.project.updatedAt = nowISO();
+        });
+        scheduleSave();
+      },
       refreshProjects: async () => {
         try {
           const list = await getRepo().listProjects();
@@ -1559,16 +1679,17 @@ export const useApp = create<AppState>()(
       },
     })),
     {
-      // temporal 追跡は tasks/dependencies のみ（§2.3）。
-      partialize: (state): Pick<AppState, "tasks" | "dependencies"> => ({
+      // temporal 追跡は tasks/dependencies（§2.3）と project.wbsNames のみ。
+      partialize: (state): Pick<AppState, "tasks" | "dependencies" | "project"> => ({
         tasks: state.tasks,
         dependencies: state.dependencies,
+        project: state.project,
       }),
       limit: 100,
       // 差分保存（§2.3）: 参照が変わったキーだけを、その「変更前の値」で保存する。
       // immer の構造共有により未変更 Task/Dep オブジェクトは参照共有され、メモリ膨張しない。
       diff: (pastState, currentState) => {
-        const delta: Partial<Pick<AppState, "tasks" | "dependencies">> = {};
+        const delta: Partial<Pick<AppState, "tasks" | "dependencies" | "project">> = {};
         let changed = false;
         if (pastState.tasks !== currentState.tasks) {
           delta.tasks = pastState.tasks;
@@ -1576,6 +1697,16 @@ export const useApp = create<AppState>()(
         }
         if (pastState.dependencies !== currentState.dependencies) {
           delta.dependencies = pastState.dependencies;
+          changed = true;
+        }
+        // project は WBS 名称が変わった時だけ積む（名前・基準日等の編集は履歴対象外）。
+        // Undo/Redo 時は差分側に project が無いことがあるため両方ある時のみ比較する。
+        if (
+          pastState.project &&
+          currentState.project &&
+          pastState.project.wbsNames !== currentState.project.wbsNames
+        ) {
+          delta.project = pastState.project;
           changed = true;
         }
         return changed ? delta : null;

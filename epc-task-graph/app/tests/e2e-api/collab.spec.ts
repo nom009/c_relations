@@ -208,6 +208,43 @@ test("メンバー画面から招待し、編集者の変更がポーリング�
   await bob.ctx.close();
 });
 
+test("WBS名称はサーバーに保存され、相手にもポーリングで届く", async ({
+  browser,
+}) => {
+  const { alice, bob, projectId } = await sharedSetup(browser);
+  const wbsNameOn = (page: Page) =>
+    page.evaluate(
+      () =>
+        ((window as any).__APP.getState().project.wbsNames?.["77"] ??
+          null) as string | null,
+    );
+  const serverWbsName = async () => {
+    const res = await alice.ctx.request.get(
+      `${BASE}/api/projects/${projectId}/graph`,
+      { headers: alice.user.headers },
+    );
+    expect(res.ok()).toBe(true);
+    const body = await res.json();
+    return (body.doc.project.wbsNames?.["77"] ?? null) as string | null;
+  };
+
+  await alice.page.evaluate(() =>
+    (window as any).__APP.getState().setWbsName("77", "共有工区"),
+  );
+  await expect.poll(serverWbsName).toBe("共有工区");
+  await expect(alice.page.getByTestId("savebadge")).toHaveText(/保存済み/);
+  await expect
+    .poll(() => wbsNameOn(bob.page), { timeout: 25_000 })
+    .toBe("共有工区");
+
+  // リロード後もサーバーから復元される
+  await bob.page.reload();
+  await bob.page.waitForFunction(() => !!(window as any).__APP);
+  await expect.poll(() => wbsNameOn(bob.page)).toBe("共有工区");
+  await alice.ctx.close();
+  await bob.ctx.close();
+});
+
 test("同じタスクを同時に編集すると競合ダイアログが出て、相手の変更を採用できる", async ({
   browser,
 }) => {

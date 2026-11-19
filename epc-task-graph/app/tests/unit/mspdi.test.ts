@@ -87,7 +87,7 @@ describe('MSPDI 往復（§8 / Phase5 下ごしらえ）', () => {
 });
 
 describe('MSPDI 進捗（実績・進捗率）とベースライン', () => {
-  // makeTask は実績・ベースラインを引き継がないため、後から展開して付与する。
+  // 実績・ベースラインは makeTask でも渡せるが、明示のため後から展開して付与する。
   const done = {
     ...makeTask({ id: 'A', name: '設計', wbsCode: '1.1', durationDays: 4, status: 'DONE', progress: 100 }),
     actualStart: '2026-01-05',

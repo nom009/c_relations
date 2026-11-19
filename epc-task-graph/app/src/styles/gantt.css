@@ -262,3 +262,85 @@
   border-radius: 2px;
 }
 
+/* 完了＝実績で固定（くすませる）／着手済み＝進捗を塗る */
+.gantt-bar.done {
+  opacity: 0.5;
+  filter: saturate(0.55);
+  background-image: none;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+}
+.gantt-bar.done:hover {
+  filter: saturate(0.55) brightness(1.05);
+}
+.gantt-bar.started .gantt-prog {
+  background: rgba(0, 0, 0, 0.32);
+}
+/* マイルストーン: 未完了は中抜き・完了は塗りつぶし・CPは赤枠 */
+.gantt-ms {
+  background: #fff;
+  border: 2px solid #d97706;
+}
+.gantt-ms.crit {
+  border-color: #dc2626;
+}
+.gantt-ms.done {
+  background: #64748b;
+  border-color: #475569;
+}
+/* ベースライン（保存した計画）: バーの下に細い灰色バー */
+.gantt-baseline {
+  position: absolute;
+  top: 29px;
+  height: 5px;
+  border-radius: 2px;
+  background: #94a3b8;
+  opacity: 0.75;
+}
+.gantt-baseline.ms {
+  width: 7px;
+  height: 7px;
+  margin-left: -3px;
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+/* 基準日（赤）／今日（青）の旗と縦線 */
+.gantt-now-axis {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #2563eb;
+  z-index: 4;
+}
+.gantt-flag {
+  position: absolute;
+  bottom: 1px;
+  margin-left: 3px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  color: #fff;
+  white-space: nowrap;
+  z-index: 5;
+}
+.gantt-flag.data {
+  background: #ef4444;
+}
+.gantt-flag.now {
+  background: #2563eb;
+}
+.gantt-vline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  pointer-events: none;
+}
+.gantt-vline.data {
+  border-left: 2px solid rgba(239, 68, 68, 0.4);
+}
+.gantt-vline.now {
+  border-left: 2px dashed rgba(37, 99, 235, 0.5);
+}

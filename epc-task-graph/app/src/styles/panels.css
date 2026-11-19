@@ -106,6 +106,126 @@
 .wbs-tree-label:hover {
   color: #1e40af;
 }
+/* WBS 名称: ラベルを「コード 名称 (件数)」の横並びにし、名称だけ省略する */
+.wbs-tree-label {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+.wbs-tree-label > .mono,
+.wbs-tree-label > .muted {
+  flex: none;
+}
+.wbs-tree-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wbs-tree-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+/* 見出しを div で包んだため .panel h3:first-child の詰めを打ち消す */
+.panel .wbs-tree-head > h3 {
+  margin-top: 18px;
+}
+.wbs-tree-edit {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  padding: 0 2px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wbs-tree-edit:hover {
+  text-decoration: underline;
+}
+
+/* WBS 名称の編集ダイアログ */
+.workspace-dialog.wbs-names-dialog {
+  width: min(640px, calc(100vw - 32px));
+}
+.wbs-names-filter {
+  display: block;
+  width: 100%;
+  border: 1px solid #dce3ed;
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.wbs-names-list {
+  max-height: min(52dvh, 480px);
+  overflow: auto;
+  border: 1px solid #e9edf4;
+  border-radius: 8px;
+}
+.wbs-names-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 32%) 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #f1f4f8;
+  font-size: 13px;
+}
+.wbs-names-row:last-child {
+  border-bottom: 0;
+}
+.wbs-names-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wbs-names-row input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #dce3ed;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+.wbs-names-row input:disabled {
+  background: #f3f5f9;
+}
+.wbs-names-unused {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #fff4e5;
+  color: #8a5a14;
+  font-family: inherit;
+  font-size: 11px;
+}
+.wbs-names-del {
+  border: 0;
+  background: transparent;
+  color: #b24b57;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wbs-names-del:disabled {
+  visibility: hidden;
+}
+.wbs-names-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #627082;
+}
+.wbs-names-empty {
+  padding: 10px;
+  font-size: 13px;
+  color: #627082;
+}
 
 /* 保存ビュー */
 .sv-input {

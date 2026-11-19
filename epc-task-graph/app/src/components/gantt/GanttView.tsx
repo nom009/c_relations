@@ -10,17 +10,56 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { addCalendarDays, DISC_COLOR, type TableRow } from '../../domain';
+import {
+  addCalendarDays,
+  DISC_COLOR,
+  finishVariance,
+  todayIso,
+  type CpmTaskResult,
+  type TableRow,
+  type Task,
+} from '../../domain';
 import { useApp } from '../../store/store';
 import { useCpm, useTableRows } from '../../store/hooks';
 import { ROW_HEIGHT } from '../table/cells';
+import { dateRange, varianceLabel } from '../scheduleFormat';
 
 const LEFT_W = 260; // 名前ペイン幅
 const HEAD_H = 30; // 日付軸ヘッダ高
 const MS_DAY = 86400000;
+const TODAY_PAD_DAYS = 60; // 今日が表示期間からこの日数以内なら期間を広げて今日線を見せる
 
 function dayOffset(dateStr: string, base: string): number {
   return Math.round((Date.parse(dateStr) - Date.parse(base)) / MS_DAY);
+}
+
+// WBS行の [開始, 終了)（オフセット）。efMax はその日を含む終了日なので +1 で排他的終端へ戻す。
+function wbsSpan(r: TableRow, dataDate: string): [number, number] | null {
+  if (r.esOff != null && r.efOff != null) return [r.esOff, r.efOff];
+  if (r.esMin && r.efMax) return [dayOffset(r.esMin, dataDate), dayOffset(r.efMax, dataDate) + 1];
+  return null;
+}
+
+// ベースラインの [開始, 終了)（オフセット・終了はその日を含む日付から +1）。
+function baselineSpan(t: Task | undefined, dataDate: string): [number, number] | null {
+  if (!t || !t.baselineStart || !t.baselineFinish) return null;
+  const s = dayOffset(t.baselineStart, dataDate);
+  const f = dayOffset(t.baselineFinish, dataDate) + 1;
+  if (!Number.isFinite(s) || !Number.isFinite(f)) return null;
+  return [s, Math.max(s, f)];
+}
+
+// バーのツールチップ: 予定（その日を含む）／実績／ベースライン／差異。
+function barTitle(t: Task, c: CpmTaskResult): string {
+  const lines = [
+    t.name || '（無題）',
+    t.isMilestone ? `予定 ${c.finishDate}` : `予定 ${dateRange(c.esDate, c.finishDate)}`,
+  ];
+  if (t.actualStart || t.actualFinish) lines.push(`実績 ${dateRange(t.actualStart, t.actualFinish)}`);
+  if (t.baselineStart || t.baselineFinish) lines.push(`ベースライン ${dateRange(t.baselineStart, t.baselineFinish)}`);
+  const v = finishVariance(t, c);
+  if (v != null) lines.push(`差異 ${varianceLabel(v)}`);
+  return lines.join('\n');
 }
 
 // 月初の目盛り（yyyy-mm ラベル）を [fromOff, toOff] の範囲で列挙（表示中の期間に合わせる）。
@@ -42,36 +81,48 @@ function monthTicks(dataDate: string, fromOff: number, toOff: number): { off: nu
 
 export function GanttView({ active }: { active: boolean }) {
   const dependencies = useApp((s) => s.dependencies);
+  const tasks = useApp((s) => s.tasks);
   const dataDate = useApp((s) => s.project.dataDate);
   const selection = useApp((s) => s.selection);
   const [manualDayWidth, setManualDayWidth] = useState<number | null>(null); // null=自動フィット
   const [showDeps, setShowDeps] = useState(true); // 依存矢印の表示トグル
+  const [baselinePref, setBaselinePref] = useState<boolean | null>(null); // null=ベースラインがあれば表示
   const [paneW, setPaneW] = useState(800); // 右ペイン幅（自動フィット計算用）
 
   const cpm = useCpm();
   const { rows } = useTableRows();
+  const hasBaseline = useMemo(() => tasks.some((t) => !!t.baselineFinish), [tasks]);
+  const showBaseline = hasBaseline && (baselinePref ?? true);
+  const today = todayIso();
+  const todayOff = dayOffset(today, dataDate);
 
   // 時間ドメインは「表示中の行」の日付範囲に絞る（全体15,000日でなく、見えているタスクの期間へズーム）。
+  // 完了タスクは実績日（基準日より前＝負のオフセット）に置かれるため、その分も含める。
   const range = useMemo(() => {
     let lo = Infinity;
     let hi = -Infinity;
+    const take = (s: number, f: number) => {
+      if (s < lo) lo = s;
+      if (f > hi) hi = f;
+    };
     for (const r of rows) {
       if (r.kind === 'task') {
         const c = cpm.byTask.get(r.id);
-        if (c) {
-          if (c.es < lo) lo = c.es;
-          if (c.ef > hi) hi = c.ef;
-        }
-      } else if (r.esMin && r.efMax) {
-        const es = dayOffset(r.esMin, dataDate);
-        const ef = dayOffset(r.efMax, dataDate);
-        if (es < lo) lo = es;
-        if (ef > hi) hi = ef;
+        if (c) take(c.es, c.ef);
+        const b = showBaseline ? baselineSpan(r.task, dataDate) : null;
+        if (b) take(b[0], b[1]);
+      } else {
+        const w = wbsSpan(r, dataDate);
+        if (w) take(w[0], w[1]);
       }
     }
     if (lo === Infinity) return { lo: 0, hi: 30 };
+    // 今日が近ければ範囲を広げて今日線も見せる（遠い過去/未来の基準日では広げない）。
+    if (Number.isFinite(todayOff) && todayOff >= lo - TODAY_PAD_DAYS && todayOff <= hi + TODAY_PAD_DAYS) {
+      take(todayOff, todayOff + 1);
+    }
     return { lo, hi };
-  }, [rows, cpm, dataDate]);
+  }, [rows, cpm, dataDate, showBaseline, todayOff]);
 
   const originOff = Math.floor(range.lo) - 2; // 左に少し余白
   const spanDays = Math.max(14, range.hi - originOff + 4);
@@ -83,6 +134,10 @@ export function GanttView({ active }: { active: boolean }) {
     () => monthTicks(dataDate, originOff, originOff + spanDays),
     [dataDate, originOff, spanDays],
   );
+  // 今日線は基準日と別の日で、表示期間内の時だけ出す。
+  const inView = (off: number) => Number.isFinite(off) && off >= originOff && off <= originOff + spanDays;
+  const showData = inView(0);
+  const showToday = todayOff !== 0 && inView(todayOff);
 
   const parentRef = useRef<HTMLDivElement>(null); // 右ペイン（縦横スクロール・仮想化の親）
 
@@ -184,6 +239,15 @@ export function GanttView({ active }: { active: boolean }) {
         >
           依存線
         </button>
+        <button
+          className={'btn' + (showBaseline ? ' on' : '')}
+          title={hasBaseline ? 'ベースライン（保存した計画）の表示切替' : 'ベースラインは未保存です（操作メニューから保存）'}
+          data-testid="gantt-baseline-toggle"
+          disabled={!hasBaseline}
+          onClick={() => setBaselinePref(!showBaseline)}
+        >
+          ベースライン
+        </button>
         <span className="gantt-zoom">
           日幅
           <button
@@ -273,7 +337,24 @@ export function GanttView({ active }: { active: boolean }) {
               </div>
             ))}
             {/* 基準日ライン（project.dataDate = オフセット0）。表示範囲内の時だけ見える */}
-            <div className="gantt-today" style={{ left: (0 - originOff) * dayWidth }} title={'基準日 ' + dataDate} />
+            <div className="gantt-today" style={{ left: (0 - originOff) * dayWidth }} title={'基準日（進捗の締め日） ' + dataDate} />
+            {showData ? (
+              <span
+                className="gantt-flag data"
+                style={{ left: (0 - originOff) * dayWidth }}
+                title={'基準日（進捗の締め日） ' + dataDate}
+              >
+                {todayOff === 0 ? '基準日＝今日' : '基準日'}
+              </span>
+            ) : null}
+            {showToday ? (
+              <>
+                <div className="gantt-now-axis" style={{ left: (todayOff - originOff) * dayWidth }} />
+                <span className="gantt-flag now" style={{ left: (todayOff - originOff) * dayWidth }} title={'今日 ' + today}>
+                  今日
+                </span>
+              </>
+            ) : null}
           </div>
 
           <div className="gantt-body" style={{ height: totalSize, width: timelineW }}>
@@ -281,6 +362,9 @@ export function GanttView({ active }: { active: boolean }) {
             {ticks.map((t) => (
               <div key={t.off} className="gantt-grid" style={{ left: (t.off - originOff) * dayWidth }} />
             ))}
+            {/* 基準日／今日の縦線（本体側・クリック透過） */}
+            {showData ? <div className="gantt-vline data" style={{ left: (0 - originOff) * dayWidth }} /> : null}
+            {showToday ? <div className="gantt-vline now" style={{ left: (todayOff - originOff) * dayWidth }} /> : null}
             {/* 依存矢印レイヤ（バーの下・表示中ペアのみ） */}
             {arrows.length ? (
               <svg className="gantt-deps" width={timelineW} height={totalSize}>
@@ -316,6 +400,7 @@ export function GanttView({ active }: { active: boolean }) {
                   top={vi.start}
                   selected={r.id === selId}
                   odd={vi.index % 2 === 1}
+                  showBaseline={showBaseline}
                   onSelect={() => select(r)}
                 />
               );
@@ -336,31 +421,35 @@ function GanttBar({
   top,
   selected,
   odd,
+  showBaseline,
   onSelect,
 }: {
   row: TableRow;
-  cpm: { es: number; ef: number; isCritical: boolean } | null;
+  cpm: CpmTaskResult | null;
   dataDate: string;
   dayWidth: number;
   originOff: number;
   top: number;
   selected: boolean;
   odd: boolean;
+  showBaseline: boolean;
   onSelect: () => void;
 }) {
   // バー右端ドラッグで所要日数を編集（§9.3「閲覧＋duration変更」）。プレビュー中は暦日近似で伸縮し、
   // 確定で updateTask → CPM が稼働カレンダー込みで再計算し正しい暦日スパンへスナップする。
   const [drag, setDrag] = useState<{ startX: number; startDur: number; cur: number } | null>(null);
   const isWbs = row.kind === 'wbs';
+  const task = isWbs ? undefined : row.task;
   let es: number | null = null;
   let ef: number | null = null;
   let critical = false;
 
   if (isWbs) {
-    // WBSサマリバー: 集計済み esMin/efMax（暦日）をオフセット化。
-    if (row.esMin && row.efMax) {
-      es = dayOffset(row.esMin, dataDate);
-      ef = dayOffset(row.efMax, dataDate);
+    // WBSサマリバー: 集計済みの [ES, EF)（オフセット）。
+    const span = wbsSpan(row, dataDate);
+    if (span) {
+      es = span[0];
+      ef = span[1];
     }
     critical = !!row.hasCritical;
   } else if (cpm) {
@@ -368,6 +457,28 @@ function GanttBar({
     ef = cpm.ef;
     critical = cpm.isCritical;
   }
+  // 完了＝実績で固定（くすませる）／着手済み＝進捗を塗る。
+  const done = !!task && cpm?.state === 'done';
+  const started = !!task && cpm?.state === 'started';
+
+  // ベースライン（保存した計画）: バーの下に細い灰色バー（マイルストーンは小さな菱形）。
+  const base = showBaseline ? baselineSpan(task, dataDate) : null;
+  const baseEl =
+    task && base ? (
+      task.isMilestone ? (
+        <div
+          className="gantt-baseline ms"
+          style={{ left: (base[0] - originOff) * dayWidth }}
+          title={'ベースライン ' + task.baselineStart}
+        />
+      ) : (
+        <div
+          className="gantt-baseline"
+          style={{ left: (base[0] - originOff) * dayWidth, width: Math.max(2, (base[1] - base[0]) * dayWidth) }}
+          title={'ベースライン ' + dateRange(task.baselineStart, task.baselineFinish)}
+        />
+      )
+    ) : null;
 
   const rowEl = (children: React.ReactNode) => (
     <div
@@ -376,40 +487,57 @@ function GanttBar({
       data-id={row.id}
       onClick={onSelect}
     >
+      {baseEl}
       {children}
     </div>
   );
 
   if (es == null || ef == null) return rowEl(null);
 
-  const isMilestone = !isWbs && row.task?.isMilestone;
   const x = (es - originOff) * dayWidth;
 
-  if (isMilestone) {
-    return rowEl(<div className="gantt-ms" style={{ left: x }} title={row.task!.name} />);
+  if (task && task.isMilestone) {
+    return rowEl(
+      <div
+        className={'gantt-ms' + (done ? ' done' : '') + (critical ? ' crit' : '')}
+        style={{ left: x }}
+        title={cpm ? barTitle(task, cpm) : task.name}
+      />,
+    );
   }
 
-  const baseDur = !isWbs ? row.task!.durationDays : 0;
+  const baseDur = task ? task.durationDays : 0;
   const w = drag
     ? Math.max(3, (ef - es + (drag.cur - baseDur)) * dayWidth) // プレビューは暦日近似で伸縮
     : Math.max(3, (ef - es) * dayWidth);
   const color = critical
     ? '#ef4444'
-    : isWbs
-      ? '#64748b' // WBSサマリは締まったスレート
-      : DISC_COLOR[row.task!.discipline] || DISC_COLOR.OTHER;
-  const progress = !isWbs ? row.task!.progress : (row.avgProgress ?? 0);
+    : task
+      ? DISC_COLOR[task.discipline] || DISC_COLOR.OTHER
+      : '#64748b'; // WBSサマリは締まったスレート
+  const progress = task ? task.progress : 0;
+  const title =
+    task && cpm
+      ? barTitle(task, cpm)
+      : `WBS ${row.wbsPrefix}: ${row.esMin ?? addCalendarDays(dataDate, es)} 〜 ${row.efMax ?? addCalendarDays(dataDate, ef - 1)}`;
 
   return rowEl(
     <div
-      className={'gantt-bar' + (isWbs ? ' summary' : '') + (critical ? ' crit' : '') + (drag ? ' dragging' : '')}
+      className={
+        'gantt-bar' +
+        (isWbs ? ' summary' : '') +
+        (critical ? ' crit' : '') +
+        (done ? ' done' : '') +
+        (started ? ' started' : '') +
+        (drag ? ' dragging' : '')
+      }
       style={{ left: x, width: w, background: color }}
-      title={`${isWbs ? 'WBS ' + row.wbsPrefix : row.task!.name}: ${row.esMin ?? addCalendarDays(dataDate, es)} 〜 ${row.efMax ?? addCalendarDays(dataDate, ef)}`}
+      title={title}
     >
-      {!isWbs && progress > 0 ? <i className="gantt-prog" style={{ width: progress + '%' }} /> : null}
+      {task && !done && progress > 0 ? <i className="gantt-prog" style={{ width: progress + '%' }} /> : null}
       {drag ? <span className="gantt-dur-tip">{drag.cur}d</span> : null}
-      {/* 右端ハンドル: ドラッグで所要日数を編集（WBSサマリバーは編集不可） */}
-      {!isWbs ? (
+      {/* 右端ハンドル: ドラッグで所要日数を変更（WBSサマリと完了タスクは実績固定のため不可） */}
+      {task && !done ? (
         <div
           className="gantt-bar-handle"
           title="ドラッグで所要日数を変更"
@@ -418,7 +546,7 @@ function GanttBar({
           onPointerDown={(e) => {
             e.stopPropagation();
             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-            setDrag({ startX: e.clientX, startDur: row.task!.durationDays, cur: row.task!.durationDays });
+            setDrag({ startX: e.clientX, startDur: task.durationDays, cur: task.durationDays });
           }}
           onPointerMove={(e) => {
             setDrag((d) => {
