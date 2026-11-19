@@ -207,6 +207,14 @@
 .wbs-label {
   font-weight: 700;
 }
+.wbs-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #475569;
+}
 .wbs-count {
   color: var(--muted);
   font-size: 11px;

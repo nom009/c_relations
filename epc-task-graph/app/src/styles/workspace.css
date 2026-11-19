@@ -2910,6 +2910,40 @@ button svg {
   font-weight: 600;
 }
 /* 要対応: 基準日の更新・ベースライン保存・期限超過などの一覧 */
+.stale-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 17px;
+  padding: 14px 18px;
+  border: 1px solid #eadfca;
+  border-radius: 8px;
+  background: #fdf8ee;
+  color: #b07a1c;
+}
+.stale-banner > div {
+  flex: 1;
+  min-width: 0;
+}
+.stale-banner strong {
+  display: block;
+  font-size: 13px;
+  color: #7d5413;
+}
+.stale-banner p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #5f6673;
+}
+.stale-banner .btn {
+  flex: none;
+}
+@media (max-width: 720px) {
+  .stale-banner {
+    flex-wrap: wrap;
+  }
+}
 .attention-card {
   margin: 0 24px 12px;
   padding: 12px 14px;

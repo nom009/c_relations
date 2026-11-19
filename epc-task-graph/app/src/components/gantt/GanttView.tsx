@@ -15,6 +15,8 @@ import {
   DISC_COLOR,
   finishVariance,
   todayIso,
+  wbsLabel,
+  wbsNameOf,
   type CpmTaskResult,
   type TableRow,
   type Task,
@@ -83,6 +85,7 @@ export function GanttView({ active }: { active: boolean }) {
   const dependencies = useApp((s) => s.dependencies);
   const tasks = useApp((s) => s.tasks);
   const dataDate = useApp((s) => s.project.dataDate);
+  const wbsNames = useApp((s) => s.project.wbsNames);
   const selection = useApp((s) => s.selection);
   const [manualDayWidth, setManualDayWidth] = useState<number | null>(null); // null=自動フィット
   const [showDeps, setShowDeps] = useState(true); // 依存矢印の表示トグル
@@ -312,6 +315,11 @@ export function GanttView({ active }: { active: boolean }) {
                             {r.collapsed ? '▸' : '▾'}
                           </button>
                           <b>WBS {r.wbsPrefix}</b>
+                          {wbsNameOf(r.wbsPrefix || '', wbsNames) ? (
+                            <span className="wbs-title" title={wbsLabel(r.wbsPrefix || '', wbsNames)}>
+                              {wbsNameOf(r.wbsPrefix || '', wbsNames)}
+                            </span>
+                          ) : null}
                           <span className="muted">（{r.memberCount}）</span>
                         </>
                       ) : (
@@ -401,6 +409,7 @@ export function GanttView({ active }: { active: boolean }) {
                   selected={r.id === selId}
                   odd={vi.index % 2 === 1}
                   showBaseline={showBaseline}
+                  wbsTitle={r.kind === 'wbs' ? wbsLabel(r.wbsPrefix || '', wbsNames) : ''}
                   onSelect={() => select(r)}
                 />
               );
@@ -422,6 +431,7 @@ function GanttBar({
   selected,
   odd,
   showBaseline,
+  wbsTitle,
   onSelect,
 }: {
   row: TableRow;
@@ -433,6 +443,7 @@ function GanttBar({
   selected: boolean;
   odd: boolean;
   showBaseline: boolean;
+  wbsTitle: string;
   onSelect: () => void;
 }) {
   // バー右端ドラッグで所要日数を編集（§9.3「閲覧＋duration変更」）。プレビュー中は暦日近似で伸縮し、
@@ -519,7 +530,7 @@ function GanttBar({
   const title =
     task && cpm
       ? barTitle(task, cpm)
-      : `WBS ${row.wbsPrefix}: ${row.esMin ?? addCalendarDays(dataDate, es)} 〜 ${row.efMax ?? addCalendarDays(dataDate, ef - 1)}`;
+      : `WBS ${wbsTitle || row.wbsPrefix}: ${row.esMin ?? addCalendarDays(dataDate, es)} 〜 ${row.efMax ?? addCalendarDays(dataDate, ef - 1)}`;
 
   return rowEl(
     <div

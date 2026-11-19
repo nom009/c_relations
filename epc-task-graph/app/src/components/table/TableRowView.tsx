@@ -14,7 +14,7 @@ import {
   type TableRow,
   type Task,
 } from '../../domain';
-import { DISCIPLINES, STATUSES } from '../../domain';
+import { DISCIPLINES, STATUSES, wbsNameOf } from '../../domain';
 import { useApp } from '../../store/store';
 import { selectTaskIndex } from '../../store/selectors';
 import { signedDays, varianceClass } from '../scheduleFormat';
@@ -359,6 +359,7 @@ function TableRowViewImpl({
 }: Props) {
   const isWbs = row.kind === 'wbs';
   const task = row.task;
+  const wbsName = useApp((s) => (isWbs ? wbsNameOf(row.wbsPrefix || '', s.project.wbsNames) : ''));
 
   const cell = (col: TableColumnKey) => {
     const meta = COLUMN_META[col];
@@ -404,6 +405,11 @@ function TableRowViewImpl({
               {row.collapsed ? '▸' : '▾'}
             </button>
             <span className="wbs-label">WBS {row.wbsPrefix}</span>
+            {wbsName ? (
+              <span className="wbs-title" title={wbsName}>
+                {wbsName}
+              </span>
+            ) : null}
             <span className="wbs-count">（{row.memberCount}）</span>
             {row.hasMilestone ? <span className="ms-flag" title="マイルストーンを含む">◆</span> : null}
             {row.hasCritical ? <span className="cp-flag" title="CPを含む">▲</span> : null}

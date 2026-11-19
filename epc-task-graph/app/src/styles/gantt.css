@@ -92,6 +92,14 @@
   color: var(--muted);
   font-size: 11px;
 }
+.gantt-name .wbs-title {
+  margin-left: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: #475569;
+}
 /* 右ペイン: 時間軸 */
 .gantt-right {
   flex: 1;

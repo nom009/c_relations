@@ -141,6 +141,28 @@ export function Overview({
   })();
   return (
     <div className="overview-scroll">
+      {/* 基準日が古いと全指標の前提がずれるため、要対応欄ではなく最上部に出す */}
+      {stale && (
+        <div className="stale-banner" role="status" data-testid="stale-data-date">
+          <Icon name="alert" />
+          <div>
+            <strong>
+              基準日（進捗の締め日）が {data.staleDays} 日前のままです
+            </strong>
+            <p>
+              進捗（ステータス・実績日）を更新したら、基準日を今日に進めてください。着手済みの残作業は基準日から再計算されます。
+            </p>
+          </div>
+          {!readOnly && (
+            <button
+              className="btn primary"
+              onClick={() => useApp.getState().setDataDate(today)}
+            >
+              基準日を今日に更新
+            </button>
+          )}
+        </div>
+      )}
       <section className="metrics" aria-label="プロジェクト指標">
         <div className="metric">
           <div className="metric-label">
@@ -472,24 +494,6 @@ export function Overview({
             </div>
             <Icon name="alert" />
           </div>
-          {stale && (
-            <div className="attention-card stale" data-testid="stale-data-date">
-              <strong>
-                基準日（進捗の締め日）が {data.staleDays} 日前のままです
-              </strong>
-              <p>
-                進捗（ステータス・実績日）を更新したら、基準日を今日に進めてください。着手済みの残作業は基準日から再計算されます。
-              </p>
-              {!readOnly && (
-                <button
-                  className="btn primary"
-                  onClick={() => useApp.getState().setDataDate(today)}
-                >
-                  基準日を今日に更新
-                </button>
-              )}
-            </div>
-          )}
           {!data.hasBaseline && !readOnly && (
             <div className="attention-card baseline-cta">
               <p>
@@ -564,8 +568,7 @@ export function Overview({
           {!data.attention.length &&
             !data.overdue.length &&
             !data.slipped.length &&
-            !data.dataIssues.length &&
-            !stale && (
+            !data.dataIssues.length && (
               <div className="attention-clear">
                 <Icon name="check" size={26} />
                 <strong>確認事項はありません</strong>
