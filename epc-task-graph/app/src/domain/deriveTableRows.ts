@@ -39,6 +39,9 @@ interface Agg {
   minLs: number | null;
   minLf: number | null;
   minTf: number | null;
+  minActualStart: string | null; // 配下の最も早い実績開始（WBS行ソート用）
+  maxActualFinish: string | null; // 配下の最も遅い実績完了（WBS行ソート用）
+  maxVariance: number | null; // 配下の最大差異＝最も遅れているタスク（WBS行ソート用）
 }
 
 const cpmVal = (
@@ -64,6 +67,18 @@ const minN = (a: number | null, b: number | null): number | null => {
   if (b == null) return a;
   return Math.min(a, b);
 };
+
+const maxN = (a: number | null, b: number | null): number | null => {
+  if (a == null) return b;
+  if (b == null) return a;
+  return Math.max(a, b);
+};
+
+const minIso = (a: string | null, b: string | null | undefined): string | null =>
+  !b ? a : a == null || b < a ? b : a;
+
+const maxIso = (a: string | null, b: string | null | undefined): string | null =>
+  !b ? a : a == null || b > a ? b : a;
 
 export function deriveTableRows(
   tasks: Task[],
@@ -104,6 +119,9 @@ export function deriveTableRows(
       minLs: null,
       minLf: null,
       minTf: null,
+      minActualStart: null,
+      maxActualFinish: null,
+      maxVariance: null,
     };
     // 最早ES は暦日つきで畳み込む（オフセットで比較・一致した端点の日付文字列を保持）。
     const considerEs = (off: number | null, date: string | null): void => {
@@ -129,6 +147,9 @@ export function deriveTableRows(
       agg.minLs = minN(agg.minLs, cpmVal(cpmByTask, t.id, 'ls'));
       agg.minLf = minN(agg.minLf, cpmVal(cpmByTask, t.id, 'lf'));
       agg.minTf = minN(agg.minTf, cpmVal(cpmByTask, t.id, 'totalFloat'));
+      agg.minActualStart = minIso(agg.minActualStart, t.actualStart);
+      agg.maxActualFinish = maxIso(agg.maxActualFinish, t.actualFinish);
+      agg.maxVariance = maxN(agg.maxVariance, finishVariance(t, cpmByTask ? cpmByTask.get(t.id) : undefined));
     }
     for (const child of node.wbsChildren) {
       const ca = computeAgg(child);
@@ -141,6 +162,9 @@ export function deriveTableRows(
       agg.minLs = minN(agg.minLs, ca.minLs);
       agg.minLf = minN(agg.minLf, ca.minLf);
       agg.minTf = minN(agg.minTf, ca.minTf);
+      agg.minActualStart = minIso(agg.minActualStart, ca.minActualStart);
+      agg.maxActualFinish = maxIso(agg.maxActualFinish, ca.maxActualFinish);
+      agg.maxVariance = maxN(agg.maxVariance, ca.maxVariance);
     }
     aggByNode.set(node, agg);
     return agg;
@@ -220,6 +244,12 @@ export function deriveTableRows(
         return { v: agg.minTf ?? 0, missing: agg.minTf == null };
       case 'critical':
         return { v: agg.hasCritical ? 1 : 0, missing: false };
+      case 'actualStart':
+        return { v: agg.minActualStart ?? '', missing: agg.minActualStart == null };
+      case 'actualFinish':
+        return { v: agg.maxActualFinish ?? '', missing: agg.maxActualFinish == null };
+      case 'variance':
+        return { v: agg.maxVariance ?? 0, missing: agg.maxVariance == null };
       default:
         return { v: e.node.prefix, missing: false };
     }
