@@ -9,11 +9,15 @@
 }
 .table-toolbar {
   display: flex;
+  flex-wrap: wrap; /* 狭い幅では折り返す */
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   padding: 5px 10px;
   border-bottom: 1px solid var(--panel-border);
   background: #f8fafc;
+}
+.table-toolbar > * {
+  white-space: nowrap;
 }
 .table-toolbar .spacer {
   flex: 1;
