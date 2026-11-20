@@ -21,6 +21,43 @@ test("担当を設定して、自分の工程へ移動できる", async ({ page 
   await expect(page.getByTestId("filter-banner")).toContainText("設計1課");
   await expect(page.getByTestId("table-scroll")).toBeVisible();
 });
+test("設定ダイアログの祝日プリセットはキャンセルで破棄、保存で反映される", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.waitForFunction(() => !!(window as any).__APP);
+  const holidayCount = () =>
+    page.evaluate(() => {
+      const s = (window as any).__APP.getState();
+      const cal =
+        s.calendars.find((c: any) => c.id === s.project.calendarId) ??
+        s.calendars[0];
+      return cal.holidays.length as number;
+    });
+  const before = await holidayCount();
+  const openPresets = async () => {
+    await page
+      .getByRole("button", { name: "ワークスペース設定", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "プロジェクト設定" });
+    await dialog.getByText("祝日・休業日を設定").click();
+    await dialog.getByRole("button", { name: "日本の祝日を追加" }).click();
+    await expect(
+      dialog.getByTestId("holiday-presets").getByRole("status"),
+    ).toContainText("変更を保存");
+    return dialog;
+  };
+
+  let dialog = await openPresets();
+  await dialog.getByRole("button", { name: "キャンセル", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await holidayCount()).toBe(before);
+
+  dialog = await openPresets();
+  await dialog.getByRole("button", { name: "変更を保存" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(holidayCount).toBeGreaterThan(before);
+});
 test("追加したタスクの工期変更はプレビューを確認してから適用する", async ({
   page,
 }) => {

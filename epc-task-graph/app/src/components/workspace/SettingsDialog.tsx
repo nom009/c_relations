@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useApp, selectActiveCalendar, selectReadOnly } from "../../store/store";
-import { isValidIsoDate, mergeHolidays, todayIso } from "../../domain";
+import { isValidIsoDate, todayIso } from "../../domain";
 import { API_MODE } from "../../storage/mode";
 import { Dialog } from "./Dialog";
 import { WbsNamesDialog } from "./WbsNamesDialog";
@@ -149,19 +149,11 @@ export function SettingsDialog({
                     onChange={(e) => setHolidays(e.target.value)}
                   />
                 </label>
-                {/* プリセットはストアへ即時反映し、編集中の下書きにも取り込む */}
+                {/* プリセットは下書きに取り込むだけ。「変更を保存」で反映、キャンセルで破棄 */}
                 <HolidayPresets
                   showStatus
-                  canClear={holidays.trim() !== "" || (cal?.holidays.length ?? 0) > 0}
-                  onAdded={(dates) =>
-                    setHolidays((h) =>
-                      mergeHolidays(
-                        h.split(/[\s,]+/).filter(isValidIsoDate),
-                        dates,
-                      ).join("\n"),
-                    )
-                  }
-                  onCleared={() => setHolidays("")}
+                  draft={holidays.split(/[\s,]+/).filter(isValidIsoDate)}
+                  onDraftChange={(dates) => setHolidays(dates.join("\n"))}
                 />
               </details>
               {!readOnly && (
