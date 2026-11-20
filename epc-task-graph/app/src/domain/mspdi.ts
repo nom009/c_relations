@@ -8,6 +8,7 @@ import type { Dependency, DependencyType, GraphDoc, Status, Task } from './types
 import type { CpmResult } from './cpm';
 import { makeDep, makeTask } from './factory';
 import { isValidIsoDate } from './schema';
+import { WBS_CODE_MAX, WBS_NAME_MAX, WBS_NAMES_MAX } from './wbs';
 
 const MIN_PER_DAY = 480; // 8h/日（MSP 既定）。MSPDI Duration/LinkLag の日換算に使用。
 
@@ -100,8 +101,12 @@ export function toMspdi(doc: GraphDoc, cpm?: CpmResult | null): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<Project xmlns="http://schemas.microsoft.com/project">\n  <Name>${escXml(doc.project.name)}</Name>\n  <Tasks>${taskXml}\n  </Tasks>\n</Project>\n`;
 }
 
-// ---- インポート: MSPDI XML → { tasks, dependencies }。要約(WBS親)タスクはスキップ ----
-export function fromMspdi(xml: string, by = '私'): { tasks: Task[]; dependencies: Dependency[] } {
+// ---- インポート: MSPDI XML → { tasks, dependencies, wbsNames }。要約(WBS親)タスクは
+//      タスクにせず、その WBS コードと名前を WBS 名称として取り込む ----
+export function fromMspdi(
+  xml: string,
+  by = '私',
+): { tasks: Task[]; dependencies: Dependency[]; wbsNames: Record<string, string> } {
   // 開始タグは属性付き（例: <Task xmlns="...">）も許容する。<Tasks> には一致しない。
   const field = (block: string, tag: string): string => {
     const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(block);
@@ -124,12 +129,32 @@ export function fromMspdi(xml: string, by = '私'): { tasks: Task[]; dependencie
     baselineFinish: string | null;
   }
   const parsed: P[] = [];
+  const wbsNames: Record<string, string> = {};
+  let nameCount = 0;
   const baselineRe = /<Baseline(?:\s[^>]*)?>[\s\S]*?<\/Baseline>/g;
   for (const block0 of taskBlocks) {
     // ベースライン要素は Start/Finish/Duration を含むため、本体の項目読み取りから外して別に読む。
     const baselines: string[] = block0.match(baselineRe) ?? [];
     const block = block0.replace(baselineRe, '');
-    if (field(block, 'Summary') === '1') continue; // 要約タスク（WBS親）は除外
+    if (field(block, 'Summary') === '1') {
+      // 要約タスク（WBS親）はタスクにしない。名前は WBS 名称へ（プロジェクト要約 UID0/レベル0 は除く）。
+      const code = decXml(field(block, 'WBS') || field(block, 'OutlineNumber')).trim();
+      const name = decXml(field(block, 'Name')).trim().slice(0, WBS_NAME_MAX);
+      const root = field(block, 'UID') === '0' || field(block, 'OutlineLevel') === '0';
+      if (
+        !root &&
+        code &&
+        name &&
+        code !== '__proto__' &&
+        code.length <= WBS_CODE_MAX &&
+        nameCount < WBS_NAMES_MAX &&
+        !Object.prototype.hasOwnProperty.call(wbsNames, code)
+      ) {
+        wbsNames[code] = name;
+        nameCount++;
+      }
+      continue;
+    }
     const uid = field(block, 'UID');
     if (!uid) continue;
     const milestone = field(block, 'Milestone') === '1';
@@ -206,5 +231,5 @@ export function fromMspdi(xml: string, by = '私'): { tasks: Task[]; dependencie
       dependencies.push(makeDep(predId, succId, { type: CODE_TO_TYPE[l.type] ?? 'FS', lagDays: l.lagDays }, by));
     }
   }
-  return { tasks, dependencies };
+  return { tasks, dependencies, wbsNames };
 }

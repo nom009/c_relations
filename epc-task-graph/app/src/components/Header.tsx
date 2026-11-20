@@ -403,13 +403,15 @@ export function Header({
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        const { tasks, dependencies } = fromMspdi(reader.result as string);
+        const { tasks, dependencies, wbsNames } = fromMspdi(reader.result as string);
         if (!tasks.length) {
           useApp.getState().showToast("MSPDIにタスクが見つかりません", true);
           return;
         }
+        const base = emptyDoc();
+        if (Object.keys(wbsNames).length) base.project.wbsNames = wbsNames;
         const doc = cloneDocWithNewIds(
-          { ...emptyDoc(), tasks, dependencies },
+          { ...base, tasks, dependencies },
           "MSPDI取込 " + new Date().toISOString().slice(0, 10),
         );
         const v = validateDoc(doc);

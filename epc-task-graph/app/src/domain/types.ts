@@ -260,6 +260,8 @@ export interface TableRow {
   efMax?: string | null; // WBS配下の最遅の終了日（その日を含む・表示用）
   esOff?: number | null; // WBS配下の最早ES（日オフセット・ガントのバー位置用）
   efOff?: number | null; // WBS配下の最遅EF（日オフセット・排他的終端）
+  baselineStart?: string | null; // WBS配下のベースライン開始の最小
+  baselineFinish?: string | null; // WBS配下のベースライン終了の最大（その日を含む）
   // kind:'task'
   task?: Task;
   dim?: boolean;

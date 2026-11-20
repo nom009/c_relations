@@ -42,15 +42,19 @@ describe('MSPDI 往復（§8 / Phase5 下ごしらえ）', () => {
     expect(named).toContainEqual({ p: '設計', s: '着工', type: 'SS', lag: 0 });
   });
 
-  it('MS Project 由来の要約タスク(Summary=1)は取り込まない・所要はh/8で日換算', () => {
+  it('MS Project 由来の要約タスク(Summary=1)はタスクにせず WBS 名称として取り込む・所要はh/8で日換算', () => {
     const xml = `<?xml version="1.0"?><Project><Tasks>
-      <Task><UID>1</UID><Name>WBS1</Name><Summary>1</Summary><OutlineLevel>1</OutlineLevel></Task>
+      <Task><UID>0</UID><Name>プロジェクト全体</Name><WBS>0</WBS><Summary>1</Summary><OutlineLevel>0</OutlineLevel></Task>
+      <Task><UID>1</UID><Name> 設計 &amp; 調達 </Name><WBS>1</WBS><Summary>1</Summary><OutlineLevel>1</OutlineLevel></Task>
+      <Task><UID>3</UID><Name>名前のみ</Name><Summary>1</Summary><OutlineLevel>1</OutlineLevel></Task>
       <Task><UID>2</UID><Name>実作業</Name><WBS>1.1</WBS><Duration>PT16H0M0S</Duration><Milestone>0</Milestone></Task>
     </Tasks></Project>`;
     const r = fromMspdi(xml);
     expect(r.tasks.length).toBe(1);
     expect(r.tasks[0].name).toBe('実作業');
     expect(r.tasks[0].durationDays).toBe(2); // 16h / 8 = 2日
+    // プロジェクト要約（UID0）と WBS の無い要約は名称にしない。名前は前後空白を除く。
+    expect(r.wbsNames).toEqual({ '1': '設計 & 調達' });
   });
 
   it('Start/Finish: Finish は最終作業日（CPM の排他的 EF の前日）、マイルストーンは Start と同日', () => {

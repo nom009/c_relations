@@ -42,6 +42,8 @@ interface Agg {
   minActualStart: string | null; // 配下の最も早い実績開始（WBS行ソート用）
   maxActualFinish: string | null; // 配下の最も遅い実績完了（WBS行ソート用）
   maxVariance: number | null; // 配下の最大差異＝最も遅れているタスク（WBS行ソート用）
+  minBaselineStart: string | null; // 配下のベースライン開始の最小（ガントのWBSベースライン）
+  maxBaselineFinish: string | null; // 配下のベースライン終了の最大（その日を含む）
 }
 
 const cpmVal = (
@@ -122,6 +124,8 @@ export function deriveTableRows(
       minActualStart: null,
       maxActualFinish: null,
       maxVariance: null,
+      minBaselineStart: null,
+      maxBaselineFinish: null,
     };
     // 最早ES は暦日つきで畳み込む（オフセットで比較・一致した端点の日付文字列を保持）。
     const considerEs = (off: number | null, date: string | null): void => {
@@ -150,6 +154,10 @@ export function deriveTableRows(
       agg.minActualStart = minIso(agg.minActualStart, t.actualStart);
       agg.maxActualFinish = maxIso(agg.maxActualFinish, t.actualFinish);
       agg.maxVariance = maxN(agg.maxVariance, finishVariance(t, cpmByTask ? cpmByTask.get(t.id) : undefined));
+      if (t.baselineStart && t.baselineFinish) {
+        agg.minBaselineStart = minIso(agg.minBaselineStart, t.baselineStart);
+        agg.maxBaselineFinish = maxIso(agg.maxBaselineFinish, t.baselineFinish);
+      }
     }
     for (const child of node.wbsChildren) {
       const ca = computeAgg(child);
@@ -165,6 +173,8 @@ export function deriveTableRows(
       agg.minActualStart = minIso(agg.minActualStart, ca.minActualStart);
       agg.maxActualFinish = maxIso(agg.maxActualFinish, ca.maxActualFinish);
       agg.maxVariance = maxN(agg.maxVariance, ca.maxVariance);
+      agg.minBaselineStart = minIso(agg.minBaselineStart, ca.minBaselineStart);
+      agg.maxBaselineFinish = maxIso(agg.maxBaselineFinish, ca.maxBaselineFinish);
     }
     aggByNode.set(node, agg);
     return agg;
@@ -317,6 +327,8 @@ export function deriveTableRows(
           efMax: agg.finishMaxDate,
           esOff: agg.minEs,
           efOff: agg.maxEf,
+          baselineStart: agg.minBaselineStart,
+          baselineFinish: agg.maxBaselineFinish,
         });
         wbsRows += 1;
         if (!collapsed) emit(e.node, depth + 1);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { Icon } from "./Icon";
 export function Dialog({
   title,
@@ -14,6 +14,7 @@ export function Dialog({
   className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId(); // ダイアログを重ねても見出し参照が衝突しないよう一意にする
   useEffect(() => {
     const el = ref.current;
     el?.showModal();
@@ -25,7 +26,7 @@ export function Dialog({
     <dialog
       ref={ref}
       className={"workspace-dialog " + className}
-      aria-labelledby="dialog-title"
+      aria-labelledby={titleId}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
@@ -45,7 +46,7 @@ export function Dialog({
     >
       <div className="dialog-header">
         <div>
-          <h2 id="dialog-title">{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>
         <button

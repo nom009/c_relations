@@ -290,3 +290,33 @@ export function mergeRows<T extends { id: string }>(
   for (const [id, u] of upserts) if (!seen.has(id)) out.push(u);
   return out;
 }
+
+type Names = Record<string, string>;
+
+// 他者による WBS 名称の変更（prev → next のコード単位の差分）を names に重ねる。
+// Undo 履歴の各状態に適用し、自分の名称編集を戻しても他者の名称は巻き戻らないようにする。
+export function rebaseWbsNames(
+  names: Names | undefined,
+  prev: Names | undefined,
+  next: Names | undefined,
+): Names | undefined {
+  const p = prev ?? {};
+  const n = next ?? {};
+  const has = (o: Names, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+  const out: Names = { ...(names ?? {}) };
+  let changed = false;
+  for (const k of new Set([...Object.keys(p), ...Object.keys(n)])) {
+    if (k === '__proto__') continue;
+    if (has(n, k)) {
+      if (has(p, k) && p[k] === n[k]) continue;
+      if (out[k] !== n[k]) {
+        out[k] = n[k];
+        changed = true;
+      }
+    } else if (has(out, k)) {
+      delete out[k];
+      changed = true;
+    }
+  }
+  return changed ? out : names;
+}

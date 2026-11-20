@@ -304,6 +304,10 @@
   background: #94a3b8;
   opacity: 0.75;
 }
+.gantt-baseline.summary {
+  background: #64748b;
+  opacity: 0.55;
+}
 .gantt-baseline.ms {
   width: 7px;
   height: 7px;

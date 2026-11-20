@@ -45,6 +45,18 @@ describe('deriveTableRows: WBSツリー化（§12.3.1 段3）', () => {
     // "1" は WBS行を作り、その子として y が付く
     expect(rows.some((r) => r.kind === 'wbs' && r.id === 'wbs::1')).toBe(true);
   });
+
+  it('WBS行は配下のベースライン開始の最小・終了の最大を持つ（片方欠けのタスクは無視）', () => {
+    const t1 = makeTask({ name: 'a', wbsCode: '1.1', baselineStart: '2026-01-10', baselineFinish: '2026-01-20' });
+    const t2 = makeTask({ name: 'b', wbsCode: '1.2', baselineStart: '2026-01-05', baselineFinish: '2026-02-01' });
+    const t3 = makeTask({ name: 'c', wbsCode: '1.2', baselineStart: '2025-12-01', baselineFinish: null });
+    const t4 = makeTask({ name: 'd', wbsCode: '2.1' });
+    const { rows } = deriveTableRows([t1, t2, t3, t4], [], spec(), NO_SORT, NO_CPM);
+    const w = (id: string) => rows.find((r) => r.id === id)!;
+    expect([w('wbs::1').baselineStart, w('wbs::1').baselineFinish]).toEqual(['2026-01-05', '2026-02-01']);
+    expect([w('wbs::1.1').baselineStart, w('wbs::1.1').baselineFinish]).toEqual(['2026-01-10', '2026-01-20']);
+    expect([w('wbs::2').baselineStart, w('wbs::2').baselineFinish]).toEqual([null, null]);
+  });
 });
 
 describe('deriveTableRows: ISOLATE 枝刈り（§12.3.1 段3/4）', () => {

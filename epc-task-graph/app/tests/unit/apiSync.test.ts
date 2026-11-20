@@ -6,6 +6,7 @@ import {
   commitPatch,
   createSyncState,
   planRemoteChanges,
+  rebaseWbsNames,
   resetSync,
 } from "../../src/store/sync";
 import type { DirtySnapshot } from "../../src/store/persistence";
@@ -137,5 +138,20 @@ describe("planRemoteChanges（ポーリングの取り込み）", () => {
     );
     expect(plan.settled.deletedTasks).toEqual([a.id]);
     expect(plan.removeTaskIds).toEqual([b.id]);
+  });
+});
+
+describe("rebaseWbsNames（他者の名称変更を Undo 履歴へ重ねる）", () => {
+  it("他者が変えたコードだけを反映し、自分の編集中のコードは履歴の値を保つ", () => {
+    // 履歴: 自分が A を付ける前の状態（A なし・B=旧）。他者が B を変更・C を追加・D を削除。
+    const history = { B: "旧B", D: "旧D" };
+    const prev = { A: "自分A", B: "旧B", D: "旧D" };
+    const next = { A: "自分A", B: "新B", C: "新C" };
+    expect(rebaseWbsNames(history, prev, next)).toEqual({ B: "新B", C: "新C" });
+  });
+  it("変化がなければ同じ参照を返す", () => {
+    const history = { A: "x" };
+    expect(rebaseWbsNames(history, { B: "y" }, { B: "y" })).toBe(history);
+    expect(rebaseWbsNames(undefined, undefined, {})).toBeUndefined();
   });
 });

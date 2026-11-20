@@ -31,6 +31,7 @@ import {
   mergeRows,
   planAdoptServer,
   planRemoteChanges,
+  rebaseWbsNames,
   resetSync,
   syncState,
   type RemotePlan,
@@ -43,7 +44,7 @@ const POLL_INTERVAL_MS = 10_000;
 const ROLE_REFRESH_EVERY = 6; // 6回に1回（約1分）プロジェクト一覧と権限を取り直す
 const RETRY_BACKOFF_MS = [5_000, 15_000, 30_000, 60_000];
 
-type HistoryEntry = Partial<Pick<AppState, 'tasks' | 'dependencies'>>;
+type HistoryEntry = Partial<Pick<AppState, 'tasks' | 'dependencies' | 'project'>>;
 
 function dirtySnapshot(): DirtySnapshot {
   const d = useApp.getState().dirty;
@@ -98,17 +99,28 @@ function applyPlan(plan: RemotePlan): void {
       if (plan.calendars) s.calendars = plan.calendars;
       if (plan.savedViews) s.savedViews = plan.savedViews;
     });
+    const prevNames = st.project.wbsNames;
+    const nextNames = useApp.getState().project.wbsNames;
+    const namesTouched = prevNames !== nextNames;
 
     // 履歴の各状態にも同じ変更を重ねる（Undo が他者の変更を黙って巻き戻さないように）。
-    if (tasksTouched || depsTouched) {
+    if (tasksTouched || depsTouched || namesTouched) {
       const rebase = (e: HistoryEntry): HistoryEntry => ({
         ...e,
-        ...(e.tasks ? { tasks: mergeRows(e.tasks, upT, rmT) } : {}),
-        ...(e.dependencies
+        ...(tasksTouched && e.tasks ? { tasks: mergeRows(e.tasks, upT, rmT) } : {}),
+        ...(depsTouched && e.dependencies
           ? {
               dependencies: mergeRows(e.dependencies, upD, rmD).filter(
                 (d) => !rmT.has(d.predecessorId) && !rmT.has(d.successorId),
               ),
+            }
+          : {}),
+        ...(namesTouched && e.project
+          ? {
+              project: {
+                ...e.project,
+                wbsNames: rebaseWbsNames(e.project.wbsNames, prevNames, nextNames),
+              },
             }
           : {}),
       });

@@ -42,14 +42,21 @@ function wbsSpan(r: TableRow, dataDate: string): [number, number] | null {
   return null;
 }
 
-// ベースラインの [開始, 終了)（オフセット・終了はその日を含む日付から +1）。
-function baselineSpan(t: Task | undefined, dataDate: string): [number, number] | null {
-  if (!t || !t.baselineStart || !t.baselineFinish) return null;
-  const s = dayOffset(t.baselineStart, dataDate);
-  const f = dayOffset(t.baselineFinish, dataDate) + 1;
+// ベースラインの [開始, 終了)（オフセット・終了はその日を含む日付から +1）。WBS行は配下の min/max。
+function baselineSpan(
+  start: string | null | undefined,
+  finish: string | null | undefined,
+  dataDate: string,
+): [number, number] | null {
+  if (!start || !finish) return null;
+  const s = dayOffset(start, dataDate);
+  const f = dayOffset(finish, dataDate) + 1;
   if (!Number.isFinite(s) || !Number.isFinite(f)) return null;
   return [s, Math.max(s, f)];
 }
+
+const rowBaseline = (r: TableRow): [string | null | undefined, string | null | undefined] =>
+  r.kind === 'wbs' ? [r.baselineStart, r.baselineFinish] : [r.task?.baselineStart, r.task?.baselineFinish];
 
 // バーのツールチップ: 予定（その日を含む）／実績／ベースライン／差異。
 function barTitle(t: Task, c: CpmTaskResult): string {
@@ -112,12 +119,12 @@ export function GanttView({ active }: { active: boolean }) {
       if (r.kind === 'task') {
         const c = cpm.byTask.get(r.id);
         if (c) take(c.es, c.ef);
-        const b = showBaseline ? baselineSpan(r.task, dataDate) : null;
-        if (b) take(b[0], b[1]);
       } else {
         const w = wbsSpan(r, dataDate);
         if (w) take(w[0], w[1]);
       }
+      const b = showBaseline ? baselineSpan(...rowBaseline(r), dataDate) : null;
+      if (b) take(b[0], b[1]);
     }
     if (lo === Infinity) return { lo: 0, hi: 30 };
     // 今日が近ければ範囲を広げて今日線も見せる（遠い過去/未来の基準日では広げない）。
@@ -472,24 +479,24 @@ function GanttBar({
   const done = !!task && cpm?.state === 'done';
   const started = !!task && cpm?.state === 'started';
 
-  // ベースライン（保存した計画）: バーの下に細い灰色バー（マイルストーンは小さな菱形）。
-  const base = showBaseline ? baselineSpan(task, dataDate) : null;
-  const baseEl =
-    task && base ? (
-      task.isMilestone ? (
-        <div
-          className="gantt-baseline ms"
-          style={{ left: (base[0] - originOff) * dayWidth }}
-          title={'ベースライン ' + task.baselineStart}
-        />
-      ) : (
-        <div
-          className="gantt-baseline"
-          style={{ left: (base[0] - originOff) * dayWidth, width: Math.max(2, (base[1] - base[0]) * dayWidth) }}
-          title={'ベースライン ' + dateRange(task.baselineStart, task.baselineFinish)}
-        />
-      )
-    ) : null;
+  // ベースライン（保存した計画）: バーの下に細い灰色バー（マイルストーンは小さな菱形）。WBS行は配下の範囲。
+  const [bStart, bFinish] = rowBaseline(row);
+  const base = showBaseline ? baselineSpan(bStart, bFinish, dataDate) : null;
+  const baseEl = base ? (
+    task && task.isMilestone ? (
+      <div
+        className="gantt-baseline ms"
+        style={{ left: (base[0] - originOff) * dayWidth }}
+        title={'ベースライン ' + bStart}
+      />
+    ) : (
+      <div
+        className={'gantt-baseline' + (isWbs ? ' summary' : '')}
+        style={{ left: (base[0] - originOff) * dayWidth, width: Math.max(2, (base[1] - base[0]) * dayWidth) }}
+        title={(isWbs ? 'WBS ベースライン ' : 'ベースライン ') + dateRange(bStart, bFinish)}
+      />
+    )
+  ) : null;
 
   const rowEl = (children: React.ReactNode) => (
     <div

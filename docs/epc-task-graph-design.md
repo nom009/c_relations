@@ -307,9 +307,10 @@ interface GraphDoc {
 
 - **toMspdi**：タスク（名前/WBS/所要/マイルストーン）＋依存（タイプ↔MSPDIコード・ラグ）＋任意で
   Start/Finish（CPM 由来）。
-- **fromMspdi**：要約タスク（Summary=1）除外・Duration の h/8 日換算・LinkLag 換算・XMLエスケープ往復。
+- **fromMspdi**：要約タスク（Summary=1）はタスクにせず、その WBS コードと名前を WBS 名称として取込
+  （プロジェクト要約 UID0 は除く）・Duration の h/8 日換算・LinkLag 換算・XMLエスケープ往復。
   取込は空ドキュメント化→検証→ロード→全体整列。
-- 今後の拡張：リソース（担当）・カレンダー・実績のマッピング。
+- 進捗（実績開始/完了・進捗率）とベースライン0も往復する。今後の拡張：リソース（担当）・カレンダーのマッピング。
 
 ---
 
@@ -356,7 +357,7 @@ interface GraphDoc {
 
 ### 今後
 
-- **MSPDI 拡張**：リソース（担当）・カレンダー・実績のマッピング。
+- **MSPDI 拡張**：リソース（担当）・カレンダーのマッピング。
 - **CSV 取込**：Excel からの実データ投入（実運用の最後の障壁）。
 - **Azure 本番化**（実装済み・`VITE_STORAGE=api` のビルド）：SWA + Functions + Azure SQL + Entra ID。ApiRepository を Repository 抽象に差す。
   権限はプロジェクト単位（owner/editor/viewer）。API 契約は `app/src/storage/apiContract.ts`、手順は `docs/azure-deployment.md`。
