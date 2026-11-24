@@ -45,6 +45,7 @@ EPC工程（プラント・建設）の**タスク依存関係をノードグラ
 - **IndexedDB（Dexie）** に行単位・差分保存、保存履歴5世代
 - 複数プロジェクト（新規／複製／切替／削除）
 - JSON エクスポート／インポート
+- 運用（バックアップ/復元・障害対応・リリース確認）: [docs/operations-runbook.md](docs/operations-runbook.md)
 
 ---
 
@@ -72,6 +73,7 @@ npm run test:e2e     # ブラウザテスト（別途ブラウザのインスト
 ```
 docs/epc-task-graph-design.md      設計書 v2.0（最終設計・source of truth）
 docs/design-principles.md          デザイン原則（新UI前に必読）
+docs/operations-runbook.md         運用ランブック（バックアップ/復元・障害対応・リリース手順）
 epc-task-graph/
   mock/index.html                  Phase 0 ゼロ設定モック（単一HTML）
   app/                             Vite + React18 + TypeScript 本体
@@ -95,7 +97,7 @@ epc-task-graph/
 - [x] **関係ハイライト＋世代フィルタ** — 近傍フォーカス刷新（世代バッジ・ハイライト/抽出）／右パネルからGUI依存接続
 - [x] **Phase 2 — CPM完成** — 依存タイプ **FS/SS/FF/SF＋lag**・日付制約 **SNET/FNLT/ASAP**・**稼働カレンダー**（稼働曜日＋祝日・土日も稼働に設定可）。すべて右パネル/左パネルで編集
 - [x] **Phase 1 PR5–8（主要完了）** — フィルタ/保存ビュー/**検索(Cmd+K)**/キーボード/俯瞰(集約グリッド＋CP色MiniMap)/**WBSツリーパネル**
-- [~] **MSPDI連携（下ごしらえ）** — MS Project XML の出力/取込で往復（タスク・WBS・所要・マイルストーン・依存タイプ/ラグ）。残: リソース(担当)・カレンダー
+- [~] **MSPDI連携（下ごしらえ）** — MS Project XML の出力/取込で往復（タスク・WBS・WBS名称（要約タスク）・所要・マイルストーン・依存タイプ/ラグ・進捗・ベースライン）。残: リソース(担当)・カレンダー
 - [x] **CSV（Excel）連携** — 標準テンプレートの書き出し・CSV から新規プロジェクト作成（UTF-8/Shift_JIS・行番号付きエラー）・CSV出力・CSV で現在のプロジェクトを更新（ID 照合・確認ダイアログ・1回で元に戻せる）。形式: [docs/csv-import.md](docs/csv-import.md)
 - [x] **Phase 4** — サーバー版（Azure SWA + Functions + Azure SQL・Entra ID ログイン・プロジェクト単位のメンバー権限・行単位衝突検知＋ポーリング同期）。GitHub Pages のローカル版はそのまま。手順: [docs/azure-deployment.md](docs/azure-deployment.md)
 - [ ] Phase 5 — MS Project（MSPDI）連携

@@ -8,7 +8,7 @@ import type { Dependency, DependencyType, GraphDoc, Status, Task } from './types
 import type { CpmResult } from './cpm';
 import { makeDep, makeTask } from './factory';
 import { isValidIsoDate } from './schema';
-import { WBS_CODE_MAX, WBS_NAME_MAX, WBS_NAMES_MAX } from './wbs';
+import { WBS_CODE_MAX, WBS_NAME_MAX, WBS_NAMES_MAX, buildWbsTree, naturalWbsCompare, wbsNameOf, type WbsTreeNode } from './wbs';
 
 const MIN_PER_DAY = 480; // 8h/日（MSP 既定）。MSPDI Duration/LinkLag の日換算に使用。
 
@@ -50,7 +50,12 @@ const datePart = (s: string): string | null => {
   return isValidIsoDate(d) ? d : null;
 };
 
+// 名称の無い WBS を書き出す時の要約タスク名。取込ではこの名前を WBS 名称にしない（往復で名前が増えない）。
+const placeholderSummaryName = (code: string): string => `WBS ${code}`;
+
 // ---- エクスポート: GraphDoc → MSPDI XML。cpm を渡すと Start/Finish を書き出す ----
+// WBS の各階層を要約タスク（Summary=1・名前は WBS 名称）として、配下タスクの直前に
+// アウトライン順で書き出す（MS Project で階層表示され、取込で WBS 名称へ戻る）。
 export function toMspdi(doc: GraphDoc, cpm?: CpmResult | null): string {
   const idToUid = new Map<string, number>();
   doc.tasks.forEach((t, i) => idToUid.set(t.id, i + 1));
@@ -61,44 +66,65 @@ export function toMspdi(doc: GraphDoc, cpm?: CpmResult | null): string {
     depsBySucc.get(d.successorId)!.push(d);
   }
 
-  const taskXml = doc.tasks
-    .map((t, i) => {
-      const uid = i + 1;
-      const durHours = (t.isMilestone ? 0 : Math.max(0, t.durationDays)) * (MIN_PER_DAY / 60);
-      const dur = `PT${durHours}H0M0S`;
-      const outlineLevel = (t.wbsCode || '').split('.').filter(Boolean).length || 1;
-      const links = (depsBySucc.get(t.id) ?? [])
-        .filter((d) => idToUid.has(d.predecessorId))
-        .map(
-          (d) =>
-            `\n      <PredecessorLink>\n        <PredecessorUID>${idToUid.get(d.predecessorId)}</PredecessorUID>\n        <Type>${TYPE_TO_CODE[d.type]}</Type>\n        <LinkLag>${Math.round((d.lagDays || 0) * MIN_PER_DAY * 10)}</LinkLag>\n        <LagFormat>7</LagFormat>\n      </PredecessorLink>`,
-        )
-        .join('');
-      const r = cpm?.byTask.get(t.id);
-      // Finish は最終作業日の終業時刻（CPM の finishDate はその日を含む終了日。実績完了があればその日）。
-      const hasWork = !t.isMilestone && t.durationDays > 0;
-      const finish = r ? (hasWork ? `${r.finishDate}T17:00:00` : `${r.esDate}T08:00:00`) : '';
-      const dates = r ? `\n      <Start>${r.esDate}T08:00:00</Start>\n      <Finish>${finish}</Finish>` : '';
-      const progress = `\n      <PercentComplete>${percentOf(t)}</PercentComplete>`;
-      const actuals =
-        (t.actualStart ? `\n      <ActualStart>${t.actualStart.slice(0, 10)}T08:00:00</ActualStart>` : '') +
-        (t.actualFinish
-          ? `\n      <ActualFinish>${t.actualFinish.slice(0, 10)}T${t.isMilestone ? '08' : '17'}:00:00</ActualFinish>`
-          : '');
-      const baseline =
-        t.baselineStart || t.baselineFinish
-          ? `\n      <Baseline>\n        <Number>0</Number>` +
-            (t.baselineStart ? `\n        <Start>${t.baselineStart.slice(0, 10)}T08:00:00</Start>` : '') +
-            (t.baselineFinish
-              ? `\n        <Finish>${t.baselineFinish.slice(0, 10)}T${t.isMilestone ? '08' : '17'}:00:00</Finish>`
-              : '') +
-            `\n      </Baseline>`
-          : '';
-      return `\n    <Task>\n      <UID>${uid}</UID>\n      <ID>${uid}</ID>\n      <Name>${escXml(t.name)}</Name>\n      <WBS>${escXml(t.wbsCode)}</WBS>\n      <OutlineNumber>${escXml(t.wbsCode)}</OutlineNumber>\n      <OutlineLevel>${outlineLevel}</OutlineLevel>\n      <Duration>${dur}</Duration>\n      <DurationFormat>7</DurationFormat>\n      <Milestone>${t.isMilestone ? 1 : 0}</Milestone>\n      <Summary>0</Summary>${dates}${progress}${actuals}${links}${baseline}\n    </Task>`;
-    })
-    .join('');
+  const taskXml = (t: Task, uid: number, rowId: number, outlineLevel: number): string => {
+    const durHours = (t.isMilestone ? 0 : Math.max(0, t.durationDays)) * (MIN_PER_DAY / 60);
+    const dur = `PT${durHours}H0M0S`;
+    const links = (depsBySucc.get(t.id) ?? [])
+      .filter((d) => idToUid.has(d.predecessorId))
+      .map(
+        (d) =>
+          `\n      <PredecessorLink>\n        <PredecessorUID>${idToUid.get(d.predecessorId)}</PredecessorUID>\n        <Type>${TYPE_TO_CODE[d.type]}</Type>\n        <LinkLag>${Math.round((d.lagDays || 0) * MIN_PER_DAY * 10)}</LinkLag>\n        <LagFormat>7</LagFormat>\n      </PredecessorLink>`,
+      )
+      .join('');
+    const r = cpm?.byTask.get(t.id);
+    // Finish は最終作業日の終業時刻（CPM の finishDate はその日を含む終了日。実績完了があればその日）。
+    const hasWork = !t.isMilestone && t.durationDays > 0;
+    const finish = r ? (hasWork ? `${r.finishDate}T17:00:00` : `${r.esDate}T08:00:00`) : '';
+    const dates = r ? `\n      <Start>${r.esDate}T08:00:00</Start>\n      <Finish>${finish}</Finish>` : '';
+    const progress = `\n      <PercentComplete>${percentOf(t)}</PercentComplete>`;
+    const actuals =
+      (t.actualStart ? `\n      <ActualStart>${t.actualStart.slice(0, 10)}T08:00:00</ActualStart>` : '') +
+      (t.actualFinish
+        ? `\n      <ActualFinish>${t.actualFinish.slice(0, 10)}T${t.isMilestone ? '08' : '17'}:00:00</ActualFinish>`
+        : '');
+    const baseline =
+      t.baselineStart || t.baselineFinish
+        ? `\n      <Baseline>\n        <Number>0</Number>` +
+          (t.baselineStart ? `\n        <Start>${t.baselineStart.slice(0, 10)}T08:00:00</Start>` : '') +
+          (t.baselineFinish
+            ? `\n        <Finish>${t.baselineFinish.slice(0, 10)}T${t.isMilestone ? '08' : '17'}:00:00</Finish>`
+            : '') +
+          `\n      </Baseline>`
+        : '';
+    return `\n    <Task>\n      <UID>${uid}</UID>\n      <ID>${rowId}</ID>\n      <Name>${escXml(t.name)}</Name>\n      <WBS>${escXml(t.wbsCode)}</WBS>\n      <OutlineNumber>${escXml(t.wbsCode)}</OutlineNumber>\n      <OutlineLevel>${outlineLevel}</OutlineLevel>\n      <Duration>${dur}</Duration>\n      <DurationFormat>7</DurationFormat>\n      <Milestone>${t.isMilestone ? 1 : 0}</Milestone>\n      <Summary>0</Summary>${dates}${progress}${actuals}${links}${baseline}\n    </Task>`;
+  };
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<Project xmlns="http://schemas.microsoft.com/project">\n  <Name>${escXml(doc.project.name)}</Name>\n  <Tasks>${taskXml}\n  </Tasks>\n</Project>\n`;
+  const names = doc.project.wbsNames;
+  const summaryXml = (code: string, uid: number, rowId: number, outlineLevel: number): string => {
+    const name = wbsNameOf(code, names) || placeholderSummaryName(code);
+    return `\n    <Task>\n      <UID>${uid}</UID>\n      <ID>${rowId}</ID>\n      <Name>${escXml(name)}</Name>\n      <WBS>${escXml(code)}</WBS>\n      <OutlineNumber>${escXml(code)}</OutlineNumber>\n      <OutlineLevel>${outlineLevel}</OutlineLevel>\n      <Summary>1</Summary>\n    </Task>`;
+  };
+
+  // WBS 木を深さ優先で辿る（各ノード: 直属タスク → 子 WBS を自然順）。タスクの UID は文書順のまま、
+  // 要約タスクの UID はその後ろに振り、ID は出力順の行番号にする。
+  const tree = buildWbsTree(
+    doc.tasks.map((t, i) => ({ t, uid: i + 1 })),
+    (x) => x.t.wbsCode,
+  );
+  const parts: string[] = [];
+  let rowId = 0;
+  let summaryUid = doc.tasks.length;
+  const walk = (node: WbsTreeNode<{ t: Task; uid: number }>, depth: number): void => {
+    for (const x of node.taskChildren) parts.push(taskXml(x.t, x.uid, ++rowId, depth + 1));
+    const children = [...node.wbsChildren].sort((a, b) => naturalWbsCompare(a.prefix, b.prefix));
+    for (const child of children) {
+      parts.push(summaryXml(child.prefix, ++summaryUid, ++rowId, depth + 1));
+      walk(child, depth + 1);
+    }
+  };
+  walk(tree, 0);
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<Project xmlns="http://schemas.microsoft.com/project">\n  <Name>${escXml(doc.project.name)}</Name>\n  <Tasks>${parts.join('')}\n  </Tasks>\n</Project>\n`;
 }
 
 // ---- インポート: MSPDI XML → { tasks, dependencies, wbsNames }。要約(WBS親)タスクは
@@ -141,10 +167,12 @@ export function fromMspdi(
       const code = decXml(field(block, 'WBS') || field(block, 'OutlineNumber')).trim();
       const name = decXml(field(block, 'Name')).trim().slice(0, WBS_NAME_MAX);
       const root = field(block, 'UID') === '0' || field(block, 'OutlineLevel') === '0';
+      // 名前の無い WBS を書き出した時のプレースホルダ名（"WBS 1.2"）は名称にしない。
       if (
         !root &&
         code &&
         name &&
+        name !== placeholderSummaryName(code) &&
         code !== '__proto__' &&
         code.length <= WBS_CODE_MAX &&
         nameCount < WBS_NAMES_MAX &&

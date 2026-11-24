@@ -13,7 +13,7 @@ import type {
 
 // 依存配列から隣接リスト（succ=後続方向 / pred=先行方向）を1パス O(E) で構築。
 // 以降のグラフ演算（循環検出・トポソート・近傍）は全てこの2マップを引き回して O(1) 参照する。
-export function buildAdjacency(deps: Dependency[]): Adjacency {
+export function buildAdjacency(deps: readonly Pick<Dependency, 'predecessorId' | 'successorId'>[]): Adjacency {
   const succ = new Map<string, Set<string>>(); // predecessorId → { successorId, ... }
   const pred = new Map<string, Set<string>>(); // successorId  → { predecessorId, ... }
   for (const d of deps) {
@@ -102,7 +102,10 @@ export function canConnect(
 }
 
 // Kahn のトポロジカルソート。order.length !== tasks.length なら循環あり（§5.2 検証⑤）。
-export function topoSort(tasks: Task[], deps: Dependency[]): TopoResult {
+export function topoSort(
+  tasks: readonly Pick<Task, 'id'>[],
+  deps: readonly Pick<Dependency, 'predecessorId' | 'successorId'>[],
+): TopoResult {
   // 各ノードの入次数（先行数）を数える。
   const indeg = new Map<string, number>();
   for (const t of tasks) indeg.set(t.id, 0);

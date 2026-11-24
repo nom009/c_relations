@@ -25,6 +25,7 @@ import {
   naturalWbsCompare,
   DISC_COLOR,
   type Discipline,
+  type VisibleAggregateNode,
   type VisibleNode,
 } from '../domain';
 import { toRFNodes, toRFEdges, type RFNodeData } from '../adapters/reactflow';
@@ -64,8 +65,9 @@ const OVR_CH = 132;
 const DELETE_KEYS = ['Delete', 'Backspace'];
 function gridPackOverview(vnodes: VisibleNode[]): VisibleNode[] {
   if (vnodes.length < 2 || vnodes.length > 400) return vnodes;
-  if (!vnodes.every((n) => n.kind === 'aggregate')) return vnodes;
-  const sorted = [...vnodes].sort((a, b) => naturalWbsCompare((a as any).prefix, (b as any).prefix));
+  const aggs = vnodes.filter((n): n is VisibleAggregateNode => n.kind === 'aggregate');
+  if (aggs.length !== vnodes.length) return vnodes;
+  const sorted = aggs.sort((a, b) => naturalWbsCompare(a.prefix, b.prefix));
   const cols = Math.max(1, Math.round(Math.sqrt(sorted.length * 1.7))); // 横長バイアスで一望しやすく
   return sorted.map((n, i) => ({
     ...n,

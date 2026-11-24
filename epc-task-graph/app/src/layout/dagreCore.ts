@@ -2,7 +2,7 @@
 import * as dagreNS from '@dagrejs/dagre';
 import type { VisibleNode, VisibleEdge } from '../domain';
 
-const dagre: typeof import('@dagrejs/dagre') = (dagreNS as any).default || dagreNS;
+const dagre: typeof import('@dagrejs/dagre') = (dagreNS as { default?: typeof import('@dagrejs/dagre') }).default || dagreNS;
 
 const NODE_W = 186;
 const NODE_H = 64;

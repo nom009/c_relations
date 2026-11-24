@@ -12,24 +12,32 @@ export interface ValidateResult {
 }
 
 // 意味的検証（§5.2 ①〜⑦のうち Zod で表現できないもの）。
-// mock の validateDoc と同一挙動＋DAG検証を保持。any を受け取り緩く走査する。
-export function validateSemantics(doc: any): ValidateResult {
+// mock の validateDoc と同一挙動＋DAG検証を保持。unknown を受け取り緩く走査する（例外を投げない）。
+type Loose = Record<string, unknown>;
+// 配列でなければ空、要素がオブジェクトでなければ空オブジェクトとして扱う。
+const looseList = (v: unknown): Loose[] =>
+  Array.isArray(v) ? v.map((x): Loose => (x && typeof x === 'object' ? (x as Loose) : {})) : [];
+const key = (v: unknown): string => String(v);
+
+export function validateSemantics(doc: unknown): ValidateResult {
   const errors: string[] = [];
   if (!doc || typeof doc !== 'object') return { ok: false, errors: ['ルートがオブジェクトではありません'] };
-  const tasks: any[] = doc.tasks || [];
-  const deps: any[] = doc.dependencies || [];
+  const root = doc as Loose;
+  const tasks = looseList(root.tasks);
+  const deps = looseList(root.dependencies);
 
-  const ids = new Set<string>();
+  const ids = new Set<unknown>();
   tasks.forEach((t, i) => {
-    if (ids.has(t.id)) errors.push(`tasks[${i}] ID重複: ${t.id}`);
+    if (ids.has(t.id)) errors.push(`tasks[${i}] ID重複: ${key(t.id)}`);
     ids.add(t.id);
     if (t.isMilestone && t.durationDays !== 0) errors.push(`tasks[${i}] milestoneはduration=0が必要`);
-    if (t.progress < 0 || t.progress > 100) errors.push(`tasks[${i}] progressが0-100外`);
+    const p = t.progress;
+    if (typeof p === 'number' && (p < 0 || p > 100)) errors.push(`tasks[${i}] progressが0-100外`);
   });
 
-  const depIds = new Set<string>();
+  const depIds = new Set<unknown>();
   deps.forEach((d, i) => {
-    if (depIds.has(d.id)) errors.push(`dependencies[${i}] ID重複: ${d.id}`);
+    if (depIds.has(d.id)) errors.push(`dependencies[${i}] ID重複: ${key(d.id)}`);
     depIds.add(d.id);
     if (!ids.has(d.predecessorId)) errors.push(`dependencies[${i}] predecessor不明`);
     if (!ids.has(d.successorId)) errors.push(`dependencies[${i}] successor不明`);
@@ -38,12 +46,16 @@ export function validateSemantics(doc: any): ValidateResult {
 
   const pairSeen = new Set<string>();
   deps.forEach((d, i) => {
-    const k = d.predecessorId + '>' + d.successorId;
+    const k = key(d.predecessorId) + '>' + key(d.successorId);
     if (pairSeen.has(k)) errors.push(`dependencies[${i}] 重複エッジ`);
     pairSeen.add(k);
   });
 
-  if (!topoSort(tasks, deps).ok) errors.push('DAG違反: 循環が存在します');
+  const topo = topoSort(
+    tasks.map((t) => ({ id: key(t.id) })),
+    deps.map((d) => ({ predecessorId: key(d.predecessorId), successorId: key(d.successorId) })),
+  );
+  if (!topo.ok) errors.push('DAG違反: 循環が存在します');
   return { ok: errors.length === 0, errors };
 }
 

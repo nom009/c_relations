@@ -13,6 +13,7 @@ import {
   matchesFilter,
   STATUS_LABEL,
   type ActiveView,
+  type GraphFilter,
 } from "../domain";
 import { useCpm } from "../store/hooks";
 import { CanvasArea } from "./CanvasArea";
@@ -23,7 +24,7 @@ import { MOD_LABEL } from "./keyboard";
 
 // フィルタ状態バナー（何で絞っているかを一目で・件数つき・ワンクリック解除）。
 // 「filter したものだけを分かりやすく」の中核: 今の絞り込みを言語化して常に見せる。
-function describeFilter(f: any, me: string): string[] {
+function describeFilter(f: GraphFilter, me: string): string[] {
   const parts: string[] = [];
   if (f.assignees?.length) {
     const a = f.assignees[0] === "@me" ? `自分（${me}）` : f.assignees[0];
@@ -33,12 +34,7 @@ function describeFilter(f: any, me: string): string[] {
   if (f.milestonesOnly) parts.push("マイルストーン");
   if (f.disciplines?.length) parts.push("工種: " + f.disciplines.join("・"));
   if (f.statuses?.length)
-    parts.push(
-      "状態: " +
-        f.statuses
-          .map((s: string) => STATUS_LABEL[s as keyof typeof STATUS_LABEL])
-          .join("・"),
-    );
+    parts.push("状態: " + f.statuses.map((s) => STATUS_LABEL[s]).join("・"));
   if (f.wbsPrefixes?.length) parts.push("WBS: " + f.wbsPrefixes.join("・"));
   if (f.text?.trim()) parts.push(`検索「${f.text.trim()}」`);
   return parts;

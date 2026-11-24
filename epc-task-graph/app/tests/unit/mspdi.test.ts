@@ -88,6 +88,40 @@ describe('MSPDI 往復（§8 / Phase5 下ごしらえ）', () => {
     const r = fromMspdi(toMspdi(docWith([t], [])));
     expect(r.tasks[0].name).toBe('A&B <試験>');
   });
+
+  it('WBS 階層を要約タスク(Summary=1)としてアウトライン順に書き出し、名称は往復で保たれる（名前なしは増えない）', () => {
+    const R = makeTask({ id: 'R', name: 'ルート', wbsCode: '', durationDays: 1 });
+    const C = makeTask({ id: 'C', name: '据付', wbsCode: '1.10', durationDays: 2 });
+    const d = docWith([B, A, C, M, R], deps);
+    d.project = { ...d.project, wbsNames: { '1': '設計調達', '1.2': '調達パッケージ' } };
+    const xml = toMspdi(d);
+    const rows = [...xml.matchAll(/<Task>[\s\S]*?<\/Task>/g)].map(([b]) => ({
+      name: /<Name>(.*?)<\/Name>/.exec(b)![1],
+      id: Number(/<ID>(\d+)<\/ID>/.exec(b)![1]),
+      level: Number(/<OutlineLevel>(\d+)<\/OutlineLevel>/.exec(b)![1]),
+      summary: b.includes('<Summary>1</Summary>'),
+    }));
+    expect(rows.map((r) => `${r.level}:${r.name}${r.summary ? '*' : ''}`)).toEqual([
+      '1:ルート',
+      '1:設計調達*',
+      '2:WBS 1.1*',
+      '3:設計',
+      '2:調達パッケージ*',
+      '3:調達',
+      '2:WBS 1.3*',
+      '3:着工',
+      '2:WBS 1.10*',
+      '3:据付',
+    ]);
+    expect(rows.map((r) => r.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    // タスクの UID は文書順（B=1, A=2）のまま。
+    expect(/<UID>2<\/UID>[\s\S]*?<\/Task>/.exec(xml)![0]).toContain('<Name>設計</Name>');
+
+    const r = fromMspdi(xml);
+    expect(r.tasks.map((t) => t.name).sort()).toEqual(['ルート', '据付', '着工', '設計', '調達'].sort());
+    expect(r.dependencies.length).toBe(2);
+    expect(r.wbsNames).toEqual({ '1': '設計調達', '1.2': '調達パッケージ' });
+  });
 });
 
 describe('MSPDI 進捗（実績・進捗率）とベースライン', () => {
