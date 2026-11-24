@@ -30,8 +30,14 @@ export default defineConfig(
     },
   },
   {
-    // ストア定義自身とテストは setState を正当に使う。
-    files: ['src/store/store.ts', 'src/store/apiSync.ts', 'tests/**/*.{ts,tsx}'],
+    // ストア定義自身（store.ts と分割した内部モジュール）とテストは setState を正当に使う。
+    files: [
+      'src/store/store.ts',
+      'src/store/apiSync.ts',
+      'src/store/persistenceRuntime.ts',
+      'src/store/history.ts',
+      'tests/**/*.{ts,tsx}',
+    ],
     rules: { 'no-restricted-syntax': 'off' },
   },
 );

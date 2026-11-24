@@ -379,7 +379,7 @@ epc-task-graph/
   mock/index.html            ゼロ設定モック（原型・参考）
   app/                       本体（Vite + React18 + TS）
     src/domain/              純関数（types/cpm/graph/deriveVisibleGraph/deriveTableRows/mspdi/…）
-    src/store/               zustand・selectors・persistence・useCpm
+    src/store/               zustand（store.ts＝useApp の組み立て・slices/＝アクション）・selectors・persistence・useCpm
     src/storage/             Repository・DexieRepository
     src/adapters/            React Flow 変換（隔離点）
     src/layout/              dagre（同期 + Worker）
