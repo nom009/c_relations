@@ -344,7 +344,15 @@ export function GanttView({ active }: { active: boolean }) {
         </div>
 
         {/* 右ペイン: 時間軸（縦横スクロール・仮想化の親） */}
-        <div className="gantt-right" ref={parentRef} onScroll={onScroll} data-testid="gantt-scroll">
+        <div
+          className="gantt-right"
+          ref={parentRef}
+          onScroll={onScroll}
+          data-testid="gantt-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label="ガントチャート（時間軸）"
+        >
           <div className="gantt-axis" style={{ width: timelineW, height: HEAD_H }}>
             {ticks.map((t) => (
               <div key={t.off} className="gantt-tick" style={{ left: (t.off - originOff) * dayWidth }}>

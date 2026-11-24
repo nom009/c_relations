@@ -109,13 +109,12 @@ export function App() {
           title="プロジェクト概要"
           className="workspace-brand"
           onClick={() => setOverview(true)}
-          aria-label="C-Relations ホーム"
         >
           <span className="brand-symbol">
             <Icon name="graph" size={23} />
           </span>
           <span>
-            C-Relations<small>PROJECT WORKSPACE</small>
+            C-Relations<small aria-hidden="true">PROJECT WORKSPACE</small>
           </span>
         </button>
         <button
@@ -145,7 +144,7 @@ export function App() {
           {views.map((v) => (
             <button
               title={v.label}
-              aria-label={v.label}
+              aria-keyshortcuts={v.key}
               aria-current={
                 !overview && activeView === v.id ? "page" : undefined
               }
@@ -158,7 +157,7 @@ export function App() {
             >
               <Icon name={v.icon} />
               {v.label}
-              <kbd>{v.key}</kbd>
+              <kbd aria-hidden="true">{v.key}</kbd>
             </button>
           ))}
         </nav>

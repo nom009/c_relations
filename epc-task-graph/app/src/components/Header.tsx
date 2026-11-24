@@ -505,7 +505,7 @@ export function Header({
         disabled={!canRedo || readOnly}
         onClick={() => useApp.getState().redo()}
         title={`やり直す（${modShiftKey("Z")}）`}
-        aria-label="やり直す（進む）"
+        aria-label="進む（やり直す）"
       >
         <span className="header-undo-label">進む</span>
         <span aria-hidden="true">↷</span>
